@@ -2,6 +2,8 @@
 
 An experimental Android Block Blast player for macOS. It reads an Android screen through scrcpy, detects the board and pieces with OpenCV, searches for placements, and sends drags over ADB. It verifies the board after each move and stops when the observed result differs from its prediction.
 
+For a plain-language walkthrough of what the bot does and how its components work, see [How it works](docs/HOW_IT_WORKS.md). For the release and development workflow, see [Branching](docs/BRANCHING.md).
+
 ## Status
 
 This project is under development. Vision and drag calibration were developed against a Samsung Galaxy A72 at 1080×2400. Game themes, device layouts and animation can change; other devices and themes require calibration and testing. Beam search is approximate, and its clear count is not the game's score or a guarantee of a high score.
