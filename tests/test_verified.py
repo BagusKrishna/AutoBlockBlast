@@ -1,10 +1,13 @@
+import json
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import numpy as np
 
-from autoblockblast.autoplay import check_stop, read_stable, verify_transition, wait_verified
+from autoblockblast.autoplay import StableReadTimeout, check_stop, read_stable, run, verify_transition, wait_verified
 from autoblockblast.controller import Controller, board_cell_xy
 from autoblockblast.phone import require_game
 from autoblockblast.solver import Placement, apply_move, has_placement, solve
@@ -58,6 +61,34 @@ class VerifiedPlayTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "changed unexpectedly"):
             verify_transition(self.before, after, self.placement)
 
+    def test_mid_tray_new_piece_in_empty_slot_stops(self):
+        after = SimpleNamespace(board=self.expected, pieces=[self.empty, self.single, self.single])
+        with self.assertRaisesRegex(RuntimeError, "changed unexpectedly"):
+            verify_transition(self.before, after, self.placement)
+
+    def test_last_piece_partial_refill_waits(self):
+        before = SimpleNamespace(board=self.board, pieces=[self.single, self.empty, self.empty])
+        after = SimpleNamespace(board=self.expected, pieces=[self.single, self.single, self.empty])
+        with self.assertRaisesRegex(RuntimeError, "refill"):
+            verify_transition(before, after, self.placement)
+
+    def test_drag_uses_revalidated_frame(self):
+        old_frame = np.zeros((800, 360, 3), dtype=np.uint8)
+        new_frame = old_frame.copy()
+        new_frame[600, 100] = 1
+        plan = SimpleNamespace(complete=True, placements=[self.placement])
+        with patch.multiple(
+            "autoblockblast.autoplay",
+            get_device=Mock(), require_game=Mock(), physical_size=Mock(return_value=(1080, 2400)),
+            Controller=Mock(), ScrcpyStream=Mock(), check_stop=Mock(), save_debug=Mock(),
+            solve_exact=Mock(return_value=plan), format_solution=Mock(), wait_verified=Mock(return_value=(None, SimpleNamespace(board=self.expected), 3)),
+            read_stable=Mock(side_effect=[(old_frame, self.before, 1), (new_frame, self.before, 2)]),
+        ):
+            from autoblockblast import autoplay
+            run(execute=True, moves=1)
+            drag = autoplay.Controller.return_value.drag_piece
+            self.assertTrue(drag.call_args.kwargs["frame"] is new_frame)
+
     def test_last_piece_can_refill_tray(self):
         before = SimpleNamespace(board=self.board, pieces=[self.single, self.empty, self.empty])
         after = SimpleNamespace(board=self.expected, pieces=[self.single] * 3)
@@ -92,16 +123,49 @@ class VerifiedPlayTests(unittest.TestCase):
                 read_stable(Mock(), stream, timeout=0.01)
         analyze.assert_not_called()
 
+    def test_invalid_animation_frame_cannot_satisfy_stability(self):
+        stream = Mock(alive=True)
+        frame = np.zeros((80, 36, 3), dtype=np.uint8)
+        invalid = SimpleNamespace(board=self.board, pieces=[np.ones((3, 4))] * 3)
+        stream.snapshot.side_effect = [(frame, stamp) for stamp in (10.1, 10.3, 10.4, 10.6)]
+        with patch.multiple("autoblockblast.autoplay", require_game=Mock(), check_stop=Mock(),
+                            analyze=Mock(side_effect=[self.before, invalid, self.before, self.before])), patch(
+            "autoblockblast.autoplay.time.monotonic", return_value=10.8
+        ), patch("autoblockblast.autoplay.time.sleep"):
+            _, state, stamp = read_stable(Mock(), stream)
+        self.assertIs(state, self.before)
+        self.assertEqual(stamp, 10.6)
+
     def test_temporary_animation_is_rechecked_without_another_drag(self):
         overlay = self.expected.copy()
         overlay[4, 4] = 1
         transient = SimpleNamespace(board=overlay, pieces=[self.empty, self.single, self.empty])
         settled = SimpleNamespace(board=self.expected, pieces=[self.empty, self.single, self.empty])
-        with patch("autoblockblast.autoplay.read_stable", side_effect=[(None, transient), (None, settled)]) as read:
+        with patch("autoblockblast.autoplay.read_stable", side_effect=[(None, transient, 1), (None, settled, 2)]) as read:
             with patch("autoblockblast.autoplay.save_debug"), patch("autoblockblast.autoplay.time.sleep"):
-                _, result = wait_verified(Mock(), Mock(), self.before, self.placement, after=0)
+                _, result, _ = wait_verified(Mock(), Mock(), self.before, self.placement, after=0)
         self.assertIs(result, settled)
         self.assertEqual(read.call_count, 2)
+
+    def test_verification_keeps_last_disagreement_when_next_read_times_out(self):
+        frame = np.zeros((64, 32, 3), dtype=np.uint8)
+        with TemporaryDirectory() as root:
+            with patch("autoblockblast.autoplay.ROOT", Path(root)), patch(
+                "autoblockblast.autoplay.require_game"
+            ), patch(
+                "autoblockblast.autoplay.read_stable",
+                side_effect=[(frame, self.before, 2), StableReadTimeout("read timeout")],
+            ) as read:
+                with self.assertRaisesRegex(RuntimeError, "differs"):
+                    wait_verified(Mock(), Mock(), self.before, self.placement,
+                                  after=1, before_frame=frame, before_at=0.5)
+            bundle = Path(root) / "captures" / "last-failure"
+            report = json.loads((bundle / "transition.json").read_text())
+            self.assertEqual(report["observed"]["received_at"], 2)
+            self.assertEqual(report["expected_board"], self.expected.tolist())
+            self.assertTrue((bundle / "before-raw.png").is_file())
+            self.assertTrue((bundle / "after-raw.png").is_file())
+            self.assertEqual(read.call_args.kwargs["after"], 2)
 
     def test_drag_mapping_matches_measured_phone_geometry(self):
         frame_shape = (2400, 1080, 3)

@@ -2,7 +2,7 @@
 
 This project uses two long-lived branches:
 
-- **`main`** holds versions designated for stable release. It is the GitHub default branch. The current initial snapshot is a starting point and has not yet been validated as a stable release.
+- **`main`** holds versions designated for stable release. It is the GitHub default branch.
 - **`development`** holds ongoing changes, experiments, fixes, and documentation. It may contain work that is not yet release-ready. Do day-to-day work here.
 
 ## Daily work

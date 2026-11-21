@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from functools import lru_cache
 from itertools import permutations
 
 import numpy as np
@@ -19,6 +20,8 @@ class SolveResult:
     lines_cleared: int
     clear_moves: int = 0
     complete: bool = True
+    all_clear: bool = False
+    method: str = "beam search"
 
 
 def _shape(*rows: str) -> np.ndarray:
@@ -179,55 +182,170 @@ def _partial_score(board: np.ndarray, lines: int, remaining: list[np.ndarray], c
     )
 
 
-def solve(board: np.ndarray, pieces: list[np.ndarray], beam: int = 40) -> SolveResult | None:
+def solve(board: np.ndarray, pieces: list[np.ndarray], beam: int = 40, *, all_clear_first=False) -> SolveResult | None:
     board = board.astype(np.int8)
     active = [(i, p.astype(np.int8)) for i, p in enumerate(pieces) if p.size > 0]
     if not active:
         return None
 
     best: SolveResult | None = None
-    finals: list[tuple[np.ndarray, list[Placement], int, int]] = []
+    finals: list[tuple[np.ndarray, list[Placement], int, int, bool]] = []
 
     for order in permutations(active):
-        states = [(0.0, board.copy(), [], 0, 0)]
+        states = [(0.0, board.copy(), [], 0, 0, False)]
         failed = False
         for step, (pi, piece) in enumerate(order):
             nxt = []
             remaining_after = [p for _, p in order[step + 1 :]]
-            for _, state, path, lines_total, clear_moves in states:
+            for _, state, path, lines_total, clear_moves, all_clear in states:
                 for r, c in iter_placements(state, piece):
                     nb, cleared = apply_move(state, piece, r, c)
                     sc = _partial_score(nb, lines_total + cleared, remaining_after, _contact(state, piece, r, c))
                     if sc <= -1e8:
                         continue
-                    nxt.append((sc, nb, path + [Placement(pi, r, c)], lines_total + cleared, clear_moves + int(cleared > 0)))
+                    nxt.append((sc, nb, path + [Placement(pi, r, c)], lines_total + cleared, clear_moves + int(cleared > 0), all_clear or not nb.any()))
             if not nxt:
-                for _, state, path, lines_total, clear_moves in states:
-                    finals.append((state, path, lines_total, clear_moves))
+                for _, state, path, lines_total, clear_moves, all_clear in states:
+                    finals.append((state, path, lines_total, clear_moves, all_clear))
                 failed = True
                 break
-            nxt.sort(key=lambda t: (t[4], t[3], t[0]), reverse=True)
+            nxt.sort(key=lambda t: (all_clear_first and t[5], t[4], t[3], t[0]), reverse=True)
             states = nxt[:beam]
         if not failed:
-            for _, state, path, lines_total, clear_moves in states:
-                finals.append((state, path, lines_total, clear_moves))
+            for _, state, path, lines_total, clear_moves, all_clear in states:
+                finals.append((state, path, lines_total, clear_moves, all_clear))
 
     best_rank = None
-    for state, path, lines_total, clear_moves in finals:
+    for state, path, lines_total, clear_moves, all_clear in finals:
         left = len(active) - len(path)
         sc = score_board(state, lines_total, left)
-        rank = (len(path), clear_moves, lines_total, sc)
+        if all_clear_first:
+            bits = _bits(state)
+            rank = (len(path), all_clear, clear_moves, lines_total, _future_flexibility(bits), -bits.bit_count())
+        else:
+            rank = (len(path), clear_moves, lines_total, sc)
         if best_rank is None or rank > best_rank:
             best_rank = rank
-            best = SolveResult(path, sc, state.copy(), lines_total, clear_moves, left == 0)
+            best = SolveResult(path, sc, state.copy(), lines_total, clear_moves, left == 0, all_clear)
     return best
+
+
+LEFT_COLUMN = 0x0101010101010101
+TOP_ROW = 0xff
+
+
+@lru_cache(maxsize=256)
+def _translated_masks(shape):
+    height, width, cells = shape
+    return tuple(
+        (row, col, cells << (8 * row + col))
+        for row in range(9 - height)
+        for col in range(9 - width)
+    )
+
+
+def _bits(matrix):
+    return sum(1 << (8 * int(row) + int(col)) for row, col in zip(*np.nonzero(matrix)))
+
+
+def _clear_bits(board):
+    # Collapse each full row to its leftmost bit and each full column to its top bit.
+    rows = board & (board >> 1)
+    rows &= rows >> 2
+    rows &= rows >> 4
+    rows &= LEFT_COLUMN
+    cols = board & (board >> 8)
+    cols &= cols >> 16
+    cols &= cols >> 32
+    cols &= TOP_ROW
+    clear = (rows * TOP_ROW) | (cols * LEFT_COLUMN)
+    return board & ~clear, rows.bit_count() + cols.bit_count()
+
+
+def _bit_board(bits):
+    return np.fromiter(((bits >> i) & 1 for i in range(64)), dtype=np.int8).reshape(8, 8)
+
+
+FLEX_MASKS = tuple(
+    tuple(mask for _, _, mask in _translated_masks((*shape.shape, _bits(shape))))
+    for shape in KEY_SHAPES
+)
+
+
+def _future_flexibility(bits):
+    total = 0
+    for masks in FLEX_MASKS:
+        count = 0
+        for mask in masks:
+            if not bits & mask:
+                count += 1
+                if count == 6:
+                    break
+        total += count + 5 * bool(count)
+    return total
+
+
+def solve_exact(board: np.ndarray, pieces: list[np.ndarray], *, all_clear_earned=False) -> SolveResult | None:
+    """Find the best complete 8×8 tray using observable clear counts as score proxies."""
+    if board.shape != (8, 8):
+        raise ValueError("Exact search requires an 8×8 board.")
+    options = {
+        slot: _translated_masks((*piece.shape, _bits(piece)))
+        for slot, piece in enumerate(pieces) if piece.size
+    }
+    if not options:
+        return None
+
+    best_rank = None
+    best_path = ()
+    best_board = 0
+    visited = set()
+    no_line_possible = board.sum() + sum(piece.sum() for piece in pieces) < 8
+    max_flexibility = sum(min(6, len(masks)) + 5 for masks in FLEX_MASKS)
+
+    def search(bits, remaining, path, all_clear, clear_moves, lines):
+        nonlocal best_rank, best_path, best_board
+        if no_line_possible and best_rank is not None and best_rank[3] == max_flexibility:
+            return
+        # Visits are in lexicographic path order, so the first identical state
+        # also supplies its deterministic tie-break path.
+        key = (bits, remaining, all_clear, clear_moves, lines)
+        if key in visited:
+            return
+        visited.add(key)
+        if not remaining:
+            primary = (all_clear, clear_moves, lines)
+            if best_rank is not None and primary < best_rank[:3]:
+                return
+            rank = (*primary, _future_flexibility(bits), -bits.bit_count())
+            if best_rank is None or rank > best_rank:
+                best_rank, best_path, best_board = rank, path, bits
+            return
+
+        for slot in remaining:
+            rest = tuple(other for other in remaining if other != slot)
+            for row, col, mask in options[slot]:
+                if bits & mask:
+                    continue
+                new_board, cleared = _clear_bits(bits | mask)
+                search(new_board, rest, (*path, (slot, row, col)),
+                       all_clear or new_board == 0, clear_moves + bool(cleared), lines + cleared)
+
+    search(_bits(board), tuple(options), (), all_clear_earned, 0, 0)
+    if best_rank is None:
+        return None
+    all_clear, clear_moves, lines, flexibility, _ = best_rank
+    return SolveResult(
+        [Placement(*move) for move in best_path], float(flexibility), _bit_board(best_board),
+        lines, clear_moves, all_clear=all_clear, method="exact DFS",
+    )
 
 
 def format_solution(result: SolveResult | None, pieces: list[np.ndarray] | None = None) -> str:
     if result is None:
         return "No solution"
     status = "complete" if result.complete else "partial"
-    lines = [f"{status} plan: clear moves={result.clear_moves}, lines={result.lines_cleared}, moves={len(result.placements)}, heuristic={result.score:.1f} (beam search, not game score)"]
+    lines = [f"{status} plan: all-clear={result.all_clear}, clear moves={result.clear_moves}, lines={result.lines_cleared}, moves={len(result.placements)}, heuristic={result.score:.1f} ({result.method}, score proxy)"]
     for step, p in enumerate(result.placements, 1):
         shape = ""
         if pieces is not None and 0 <= p.piece_index < len(pieces):

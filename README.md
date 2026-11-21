@@ -1,18 +1,25 @@
 # AutoBlockBlast
 
-An experimental Android Block Blast player for macOS. It reads an Android screen through scrcpy, detects the board and pieces with OpenCV, searches for placements, and sends drags over ADB. It verifies the board after each move and stops when the observed result differs from its prediction.
+AutoBlockBlast runs on a Mac and plays **Block Blast on a USB-connected Android phone**. Use it to preview the bot's suggested placements or let it play automatically. It reads the board and tray from a scrcpy video stream, searches the legal placements for the visible pieces, and verifies the result after every ADB drag.
 
-For a plain-language walkthrough of what the bot does and how its components work, see [How it works](docs/HOW_IT_WORKS.md). For the release and development workflow, see [Branching](docs/BRANCHING.md).
+## Tested setup
 
-## Status
+| Component | Tested configuration |
+| --- | --- |
+| Host | Apple silicon Mac with Python 3.12 |
+| Phone | Samsung Galaxy A72 at 1080 × 2400, connected over USB with ADB |
+| Video | scrcpy server v3.2, decoded at 360 × 800 |
+| Game | Android Block Blast, with blue and pink screenshot fixtures |
 
-This project is under development. Vision and drag calibration were developed against a Samsung Galaxy A72 at 1080×2400. Game themes, device layouts and animation can change; other devices and themes require calibration and testing. Beam search is approximate, and its clear count is not the game's score or a guarantee of a high score.
+Other Android devices may need board, tray and drag calibration. The tested setup covers Android. Support for additional game themes and device layouts depends on validation.
+
+The default solver searches every legal order and position for the pieces it can see. It favors any all-clear in a plan that uses the tray, then the number of placements that clear lines, the total lines cleared, and space for future pieces. Clear counts approximate the game's combo and scoring behavior.
 
 ## Setup
 
 1. Install Python 3.10+ and Android Platform Tools (`adb`).
 2. Enable USB debugging on the Android phone, connect it to the Mac, and authorize the Mac on the phone. Open Block Blast and keep it in the foreground.
-3. Download the **scrcpy v3.2 server** from the [official release](https://github.com/Genymobile/scrcpy/releases/tag/v3.2); save the server asset as `scrcpy/scrcpy-server`. The configured server version must match the asset.
+3. Download the **scrcpy v3.2 server** and save it as `scrcpy/scrcpy-server` inside the checkout. The configured version must match the download. [scrcpy v3.2 release](https://github.com/Genymobile/scrcpy/releases/tag/v3.2)
 4. Set up the project:
 
 ```bash
@@ -30,16 +37,29 @@ Calibration is device-specific. Run `python -m autoblockblast.calibrate` and ins
 
 ```bash
 # Read the board and print a plan without touching the phone
-python -m autoblockblast.autoplay
+.venv/bin/python -m autoblockblast.autoplay
 
 # Play continuously; press Control+C to stop
-python -m autoblockblast.autoplay --execute --moves 0
+.venv/bin/python -m autoblockblast.autoplay --execute --moves 0
 
 # Play at most three moves
-python -m autoblockblast.autoplay --execute --moves 3
+.venv/bin/python -m autoblockblast.autoplay --execute --moves 3
+
+# Compare a faster swipe using a bounded run
+.venv/bin/python -m autoblockblast.autoplay --execute --moves 3 --drag-ms 500 --timing
 ```
 
-On macOS the `scripts/` folder also contains launchers for preview, start and stop. An in-progress drag can finish before stop takes effect. Debug images are overwritten in the local, gitignored `captures/` directory. The phone screen must remain unlocked and Block Blast must remain in front.
+On macOS the `scripts/` folder also contains launchers for preview, start and stop. An in-progress drag can finish before stop takes effect. The phone screen must remain unlocked and Block Blast must remain in front.
+
+The most recent failed verification is stored locally in `captures/last-failure/`. Its JSON report records the intended move and the predicted and observed state. Raw game frames are stored when available. Restarting the bot keeps the report until a later verification failure replaces it. Preview saves a board overlay. Pass `--debug` to also save successful before/after frames. The capture directory is gitignored.
+
+Use `--solver beam` to compare the original ranking or `--solver beam-all-clear` to compare width-40 beam search using the new ranking.
+
+## Troubleshooting
+
+- **No fresh, stable game state.** Keep the game visible, dismiss any overlays, and wait for animations to settle. Run preview to check the board and tray before resuming autoplay.
+- **Board or tray mismatch.** Open `captures/last-failure/transition.json` to inspect the expected and observed states. Keep any accompanying images local.
+- **Changes appear missing.** Run the command from the `AutoBlockBlast` checkout that contains this README. The original `blockblast-vision-bot` checkout has a separate entry point.
 
 ## Tests
 
@@ -48,7 +68,7 @@ python -m unittest discover -s tests -v
 python -m autoblockblast.solver
 ```
 
-The screen fixtures cover only specific game states and themes, not every possible block or appearance. See [architecture](docs/ARCHITECTURE.md), [roadmap](docs/ROADMAP.md), and [agent guidance](AGENTS.md).
+The tests cover known screen patterns, tray verification and the exact solver. See [architecture](docs/ARCHITECTURE.md), [Android validation results](docs/ANDROID-IMPLEMENTATION-PLAN.md), and [branch workflow](docs/BRANCHING.md).
 
 ## Attribution
 

@@ -114,9 +114,11 @@ class ScrcpyStream:
             self.stop()
             raise
 
-    def snapshot(self) -> tuple[Optional[np.ndarray], float]:
+    def snapshot(self, *, after: float = 0.0) -> tuple[Optional[np.ndarray], float]:
         with self._frame_lock:
-            frame = None if self.last_frame is None else self.last_frame.copy()
+            frame = None
+            if self.last_frame is not None and self.last_frame_at > after:
+                frame = self.last_frame.copy()
             return frame, self.last_frame_at
 
     def _decode_loop(self, codec_name: str):

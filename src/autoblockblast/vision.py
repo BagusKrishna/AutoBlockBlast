@@ -52,12 +52,6 @@ def piece_mask(hsv: np.ndarray) -> np.ndarray:
     return mask
 
 
-def _cell_filled(hsv_patch: np.ndarray) -> int:
-    v = float(np.median(hsv_patch[:, :, 2]))
-    s = float(np.median(hsv_patch[:, :, 1]))
-    return int(v >= config.CELL_V_MIN or (v >= config.CELL_V_MIN - 25 and s >= config.CELL_S_MIN))
-
-
 def _trim_piece(grid: np.ndarray) -> np.ndarray:
     rows = np.any(grid, axis=1)
     cols = np.any(grid, axis=0)
@@ -88,18 +82,26 @@ def _cluster_1d(values: list[float]) -> list[float]:
     return [float(np.mean(c)) for c in clusters]
 
 
-def _largest_component(mask: np.ndarray) -> np.ndarray:
-    n, labels, stats, _ = cv.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
+def _largest_component(mask: np.ndarray, core_x: tuple[int, int] | None = None) -> np.ndarray:
+    n, labels, stats, centroids = cv.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
     if n <= 1:
         return mask
-    best = 1 + int(np.argmax(stats[1:, cv.CC_STAT_AREA]))
+    candidates = range(1, n)
+    if core_x is not None:
+        left, right = core_x
+        # Padded crops preserve wide pieces, but can also include clipped
+        # fragments of the neighboring slot.
+        candidates = [i for i in candidates if left <= centroids[i, 0] < right]
+    best = max(candidates, key=lambda i: stats[i, cv.CC_STAT_AREA], default=None)
+    if best is None:
+        return np.zeros_like(mask)
     if stats[best, cv.CC_STAT_AREA] < config.PIECE_MIN_AREA:
         return np.zeros_like(mask)
     # A diagonal piece may consist of two separate blocks. Merge a second
     # similarly sized component only when it is one cell diagonally away.
     bx, by, bw, bh, ba = stats[best]
     selected = labels == best
-    for i in range(1, n):
+    for i in candidates:
         if i == best:
             continue
         x, y, w, h, area = stats[i]
@@ -172,12 +174,12 @@ def _maybe_unclip_line(nr: int, nc: int, bw: int, bh: int, x: int, y: int, sw: i
     return nr, nc
 
 
-def _cell_centers_from_mask(mask: np.ndarray) -> list[tuple[float, float]]:
+def _cell_centers_from_mask(mask: np.ndarray, core_x: tuple[int, int] | None = None) -> list[tuple[float, float]]:
     if not mask.any():
         return []
     k = max(3, (int(min(mask.shape) * 0.05) | 1))
     closed = cv.morphologyEx(mask.astype(np.uint8), cv.MORPH_CLOSE, np.ones((k, k), np.uint8))
-    closed = _largest_component(closed)
+    closed = _largest_component(closed, core_x)
     if not closed.any():
         return []
     x, y, bw, bh = cv.boundingRect(closed)
@@ -198,7 +200,11 @@ def _cell_centers_from_mask(mask: np.ndarray) -> list[tuple[float, float]]:
             x1 = int(x + c * bw / nc)
             x2 = int(x + (c + 1) * bw / nc)
             cell = closed[y1:y2, x1:x2]
-            if cell.size and cell.mean() >= 0.22:
+            # Shadows along cell edges can fill >22% of an empty grid cell.
+            # Require foreground in its central region as well.
+            margin_y, margin_x = cell.shape[0] // 4, cell.shape[1] // 4
+            center = cell[margin_y:cell.shape[0]-margin_y, margin_x:cell.shape[1]-margin_x]
+            if cell.size and cell.mean() >= 0.22 and center.size and center.mean() >= 0.5:
                 pts.append(((y1 + y2) / 2.0, (x1 + x2) / 2.0))
     return pts
 
@@ -225,29 +231,36 @@ def parse_board(frame: np.ndarray, board_rect: config.Rect | None = None) -> tup
     gh, gw = crop.shape[:2]
     hsv = cv.cvtColor(crop, cv.COLOR_BGR2HSV)
     pad = max(1, min(gh, gw) // n // 6)
-    board = np.zeros((n, n), dtype=np.int8)
-    points = _board_sample_points(gh, gw, n)
-    # The pink theme uses brighter empty cells than the original blue theme.
-    # Compare with the locally dominant pink cell color in that theme.
-    samples = np.array([np.median(hsv[cy-pad:cy+pad+1, cx-pad:cx+pad+1], axis=(0, 1)) for cy, cx in points])
-    pink = (samples[:, 0] >= 160) & (samples[:, 0] <= 178) & (samples[:, 2] >= 120) & (samples[:, 2] <= 175)
-    pink_background = np.median(samples[pink], axis=0) if pink.sum() >= 4 else None
-    for i, (cy, cx) in enumerate(points):
-        if pink_background is not None:
-            h, s, v = samples[i]
-            dh = min(abs(h - pink_background[0]), 180 - abs(h - pink_background[0]))
-            board[i // n, i % n] = int(dh > 8 or abs(s - pink_background[1]) > 25 or abs(v - pink_background[2]) > 25)
-        else:
-            board[i // n, i % n] = _cell_filled(hsv[cy - pad : cy + pad + 1, cx - pad : cx + pad + 1])
+    points = np.asarray(_board_sample_points(gh, gw, n))
+    offsets = np.arange(-pad, pad + 1)
+    ys = points[:, 0, None, None] + offsets[None, :, None]
+    xs = points[:, 1, None, None] + offsets[None, None, :]
+    samples = np.median(hsv[ys, xs], axis=(1, 2))
+    hue, saturation, value = samples.T
+    # Pink empty cells can be brighter than the normal occupancy threshold.
+    pink = (hue >= 160) & (hue <= 178) & (value >= 120) & (value <= 175)
+    if pink.sum() >= 4:
+        bg_h, bg_s, bg_v = np.median(samples[pink], axis=0)
+        delta_h = np.abs(hue - bg_h)
+        occupied = (np.minimum(delta_h, 180 - delta_h) > 8) | (np.abs(saturation - bg_s) > 25) | (np.abs(value - bg_v) > 25)
+    else:
+        occupied = (value >= config.CELL_V_MIN) | (
+            (value >= config.CELL_V_MIN - 25) & (saturation >= config.CELL_S_MIN)
+        )
+    board = occupied.reshape(n, n).astype(np.int8)
     return board, crop
 
 
-def parse_piece_slot(slot_bgr: np.ndarray) -> np.ndarray:
+def parse_piece_slot(slot_bgr: np.ndarray, *, core_x: tuple[int, int] | None = None) -> np.ndarray:
     mask = piece_mask(cv.cvtColor(slot_bgr, cv.COLOR_BGR2HSV))
-    if not mask.any():
-        return np.zeros((0, 0), dtype=np.int8)
-    pts = _cell_centers_from_mask(mask)
-    return _shape_from_centroids(pts)
+    return _shape_from_centroids(_cell_centers_from_mask(mask, core_x))
+
+
+def _slot_core(tray_width: int, slot_index: int, crop_left: int) -> tuple[int, int]:
+    slot_width = max(1, tray_width // 3)
+    left = slot_index * slot_width
+    right = tray_width if slot_index == 2 else left + slot_width
+    return left - crop_left, right - crop_left
 
 
 def pickup_geometry(frame: np.ndarray, piece_index: int, piece: np.ndarray):
@@ -255,7 +268,8 @@ def pickup_geometry(frame: np.ndarray, piece_index: int, piece: np.ndarray):
     tray = _crop_rel(frame, config.PIECES_RECT)
     x1, x2 = _slot_x_ranges(tray.shape[1])[piece_index]
     slot = tray[:, x1:x2]
-    points = _cell_centers_from_mask(piece_mask(cv.cvtColor(slot, cv.COLOR_BGR2HSV)))
+    mask = piece_mask(cv.cvtColor(slot, cv.COLOR_BGR2HSV))
+    points = _cell_centers_from_mask(mask, _slot_core(tray.shape[1], piece_index, x1))
     if not np.array_equal(_shape_from_centroids(points), piece):
         raise RuntimeError("Piece changed before pickup; no drag sent.")
     y, x = min(points, key=lambda point: (point[0], point[1]))
@@ -285,10 +299,10 @@ def parse_pieces(
     h, w = crop.shape[:2]
     pieces = []
     piece_crops = []
-    for x1, x2 in _slot_x_ranges(w):
+    for i, (x1, x2) in enumerate(_slot_x_ranges(w)):
         slot = crop[:, x1:x2]
         piece_crops.append(slot)
-        pieces.append(parse_piece_slot(slot))
+        pieces.append(parse_piece_slot(slot, core_x=_slot_core(w, i, x1)))
     return pieces, crop, piece_crops
 
 
@@ -342,7 +356,7 @@ def _draw_piece_overlay(frame: np.ndarray, result: VisionResult, pieces_rect: co
         mw = min(mask.shape[1], roi.shape[1])
         mh = min(mask.shape[0], roi.shape[0])
         roi[:mh, :mw][mask[:mh, :mw] > 0] = (0, 0, 220)
-        for cy, cx in _cell_centers_from_mask(mask):
+        for cy, cx in _cell_centers_from_mask(mask, _slot_core(tray_w, i, ranges[i][0])):
             cv.circle(frame, (ox + int(round(cx)), by + int(round(cy))), 4, (0, 255, 255), -1)
 
 

@@ -72,7 +72,7 @@ class Controller:
         ms = config.DRAG_MS if duration_ms is None else duration_ms
         self.device.shell(f"input swipe {x1} {y1} {x2} {y2} {ms}")
 
-    def drag_piece(self, piece_index: int, piece: np.ndarray, place: Placement, frame_shape, frame=None) -> None:
+    def drag_piece(self, piece_index: int, piece: np.ndarray, place: Placement, frame_shape, frame=None, *, duration_ms=None, settle=True) -> float:
         self.set_frame_size(frame_shape[1], frame_shape[0])
         sx, sy = piece_slot_center(frame_shape, piece_index)
         center_x, center_y = sx, sy
@@ -89,8 +89,14 @@ class Controller:
         x2, y2 = self._to_device(dx, dy)
         if not (0 <= x1 < self.screen_w and 0 <= x2 < self.screen_w and 0 <= y1 < self.screen_h and 0 <= y2 < self.screen_h):
             raise RuntimeError("Drag would leave the screen; check the calibration and drop offset.")
-        self.swipe(x1, y1, x2, y2)
-        time.sleep(config.SETTLE_S)
+        if duration_ms is None:
+            self.swipe(x1, y1, x2, y2)
+        else:
+            self.swipe(x1, y1, x2, y2, duration_ms)
+        released_at = time.monotonic()
+        if settle:
+            time.sleep(config.SETTLE_S)
+        return released_at
 
     def execute(self, pieces: list[np.ndarray], result: SolveResult, frame_shape) -> None:
         for place in result.placements:
