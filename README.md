@@ -2,6 +2,12 @@
 
 AutoBlockBlast runs on a Mac and plays **Block Blast on a USB-connected Android phone**. Use it to preview the bot's suggested placements or let it play automatically. It reads the board and tray from a scrcpy video stream, searches the legal placements for the visible pieces, and verifies the result after every ADB drag.
 
+## Autoplay preview
+
+A short recording of the bot playing on a Samsung Galaxy A72.
+
+![AutoBlockBlast autoplay preview](docs/media/autoplay.gif)
+
 ## Tested setup
 
 | Component | Tested configuration |
