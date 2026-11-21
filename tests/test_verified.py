@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-from autoblockblast.autoplay import StableReadTimeout, check_stop, read_stable, run, verify_transition, wait_verified
+from autoblockblast.autoplay import StableReadTimeout, check_stop, wait_if_paused, read_stable, run, verify_transition, wait_verified
 from autoblockblast.controller import Controller, board_cell_xy
 from autoblockblast.phone import require_game
 from autoblockblast.solver import Placement, apply_move, has_placement, solve
@@ -107,6 +107,22 @@ class VerifiedPlayTests(unittest.TestCase):
             stop.exists.return_value = True
             with self.assertRaises(KeyboardInterrupt):
                 check_stop()
+
+    def test_pause_waits_then_resumes(self):
+        with patch("autoblockblast.autoplay.PAUSE_FILE") as pause, patch(
+            "autoblockblast.autoplay.check_stop"
+        ) as stop, patch("autoblockblast.autoplay.time.sleep"):
+            pause.exists.side_effect = [True, True, False]
+            wait_if_paused()
+            stop.assert_called_once()
+
+    def test_stop_interrupts_paused_session(self):
+        with patch("autoblockblast.autoplay.PAUSE_FILE") as pause, patch(
+            "autoblockblast.autoplay.check_stop", side_effect=KeyboardInterrupt
+        ):
+            pause.exists.return_value = True
+            with self.assertRaises(KeyboardInterrupt):
+                wait_if_paused()
 
     def test_dead_video_is_rejected(self):
         stream = Mock(alive=False)

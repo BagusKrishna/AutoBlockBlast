@@ -1,6 +1,7 @@
 """Verified autoplay for the calibrated Android phone. Ctrl+C stops the session."""
 
 import argparse
+import base64
 import fcntl
 import json
 from dataclasses import asdict
@@ -19,11 +20,24 @@ from autoblockblast.vision import analyze, format_state, render_debug
 
 ROOT = Path(__file__).resolve().parents[2]
 STOP_FILE = ROOT / "captures" / "stop.request"
+PAUSE_FILE = ROOT / "captures" / "pause.request"
+UI_METRICS = False
+_last_metrics_at = 0.0
 
 
 def check_stop():
     if STOP_FILE.exists():
         raise KeyboardInterrupt
+
+
+def wait_if_paused():
+    if not PAUSE_FILE.exists():
+        return
+    print("Paused.", flush=True)
+    while PAUSE_FILE.exists():
+        check_stop()
+        time.sleep(0.1)
+    print("Resumed.", flush=True)
 
 
 def state_key(state):
@@ -32,6 +46,20 @@ def state_key(state):
 
 class StableReadTimeout(RuntimeError):
     pass
+
+
+def emit_metrics_frame(frame):
+    global _last_metrics_at
+    now = time.monotonic()
+    if not UI_METRICS or now - _last_metrics_at < 0.5:
+        return
+    _last_metrics_at = now
+    height, width = frame.shape[:2]
+    # Score and combo are displayed above and over the board respectively.
+    crop = frame[int(height * 0.08):int(height * 0.64), int(width * 0.08):int(width * 0.92)]
+    ok, encoded = cv.imencode(".jpg", crop, [cv.IMWRITE_JPEG_QUALITY, 85])
+    if ok:
+        print("UI_FRAME " + base64.b64encode(encoded).decode("ascii"), flush=True)
 
 
 def read_stable(device, stream, *, after=0.0, timeout=8.0, need_pieces=True):
@@ -49,6 +77,7 @@ def read_stable(device, stream, *, after=0.0, timeout=8.0, need_pieces=True):
             time.sleep(0.04)
             continue
         seen_at = received_at
+        emit_metrics_frame(frame)
         state = analyze(frame)
         invalid_piece = any(p.size and (max(p.shape) > 5 or p.sum() > 9) for p in state.pieces)
         if invalid_piece or (need_pieces and not any(p.size for p in state.pieces)):
@@ -160,6 +189,8 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
     try:
         stream.start()
         while moves == 0 or played < moves:
+            check_stop()
+            wait_if_paused()
             started = time.monotonic()
             planning_frame, state, state_at = verified if verified is not None else read_stable(device, stream)
             ready = time.monotonic()
@@ -184,6 +215,10 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
             if debug:
                 save_debug(device, frame, current, "before.png")
             check_stop()
+            if PAUSE_FILE.exists():
+                # Re-read the board after resuming because the game may have changed.
+                verified = None
+                continue
             drag_start = time.monotonic()
             released = controller.drag_piece(
                 placement.piece_index, current.pieces[placement.piece_index], placement,
@@ -214,8 +249,11 @@ def main():
     parser.add_argument("--drag-ms", type=int, help="Override the calibrated swipe duration for a bounded run")
     parser.add_argument("--debug", action="store_true", help="Save successful before/after game frames too")
     parser.add_argument("--timing", action="store_true", help="Print per-move stage timings")
+    parser.add_argument("--ui-metrics", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--solver", choices=("exact", "beam", "beam-all-clear"), default="exact")
     args = parser.parse_args()
+    global UI_METRICS
+    UI_METRICS = args.ui_metrics
     if args.drag_ms is not None and (args.drag_ms <= 0 or not args.execute or args.moves <= 0):
         parser.error("--drag-ms needs a positive duration and a bounded --execute run")
     if args.moves < 0:

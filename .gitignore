@@ -45,3 +45,6 @@ debug/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Local desktop app build
+/AutoBlockBlast.app/

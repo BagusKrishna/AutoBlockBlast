@@ -1,6 +1,6 @@
 # AutoBlockBlast
 
-AutoBlockBlast runs on a Mac and plays **Block Blast on a USB-connected Android phone**. Use it to preview the bot's suggested placements or let it play automatically. It reads the board and tray from a scrcpy video stream, searches the legal placements for the visible pieces, and verifies the result after every ADB drag.
+AutoBlockBlast runs on a Mac and plays **Block Blast on an Android phone connected through ADB over USB or Wi-Fi**. Use it to preview the bot's suggested placements or let it play automatically. It reads the board and tray from a scrcpy video stream, searches the legal placements for the visible pieces, and verifies the result after every ADB drag.
 
 ## Autoplay preview
 
@@ -39,7 +39,34 @@ python -m autoblockblast.check_setup
 
 Calibration is device-specific. Run `python -m autoblockblast.calibrate` and inspect the detected board and pieces before enabling autoplay. Drag gain and pickup offsets in `src/autoblockblast/config.py` also need to match the device; the GUI does not calibrate those values.
 
-## Run
+## Connect over Wi-Fi
+
+Wireless debugging requires Android 11 or newer, a recent Android SDK Platform Tools installation, and the Mac and phone on the same Wi-Fi network. Turn on **Wireless debugging** under Developer options on the phone and allow it on the network.
+
+Select **Pair device with pairing code**. On the Mac, run the following command using the IP address and pairing port shown on that pairing screen, then enter the six-digit code when prompted.
+
+```sh
+adb pair PHONE_IP:PAIRING_PORT
+```
+
+Check `adb devices`. If the phone does not appear as a connected device, use the **IP address & Port** on the main Wireless debugging screen. This port can differ from the pairing port.
+
+```sh
+adb connect PHONE_IP:DEBUGGING_PORT
+adb devices
+```
+
+Once the Wi-Fi connection is listed as `device`, disconnect the USB cable and use the desktop app or Terminal commands normally. USB remains available by connecting the cable and enabling USB debugging. The bot currently requires exactly one ADB device entry, so when both USB and Wi-Fi entries are present, disconnect one transport before starting. Wi-Fi reconnection or a new debugging port may be needed after changing networks or restarting the phone.
+
+See the [Android wireless debugging guide](https://developer.android.com/tools/adb#connect-to-a-device-over-wi-fi) for pairing and troubleshooting.
+
+## Mac desktop app
+
+Build the app once from the project folder with `desktop/build-app.sh`. This requires Apple's Swift compiler and the Python environment from setup. Double-click `AutoBlockBlast.app` in the project folder to open it.
+
+Connect the phone, open Block Blast and click **Start**. **Pause** finishes the current move and waits, then **Resume** continues after checking the game state. **Stop** ends the session after the current move. The app reads the current score and last visible combo from the game screen when text recognition succeeds. It also displays verified moves and any stopping reason.
+
+## Run in Terminal
 
 ```bash
 # Read the board and print a plan without touching the phone
