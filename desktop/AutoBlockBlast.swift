@@ -570,6 +570,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
                 lastMessage = line
             } else if line.contains("Stopped") || line.contains("No complete plan") ||
                       line.contains("No fresh") || line.contains("not in front") ||
+                      line.contains("Android input focus unavailable") ||
                       line.contains("not found") || line.contains("No Android device") ||
                       line.contains("unauthorized") || line.contains("already running") ||
                       line.contains("No adb exe") || line.contains("No Android device found") ||

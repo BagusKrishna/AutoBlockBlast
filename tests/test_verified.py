@@ -234,10 +234,24 @@ class VerifiedPlayTests(unittest.TestCase):
 
     def test_game_focus_required(self):
         device = Mock()
-        device.shell.return_value = "mCurrentFocus=Window{abc u0 com.block.juggle/Game}"
+        game = "FocusedDisplayId: 0\n    displayId=0, name='8adb8e0 com.block.juggle/Game'"
+        device.shell2.return_value = SimpleNamespace(returncode=0, output=game)
         require_game(device)
-        device.shell.return_value = "mCurrentFocus=Window{abc u0 com.android.settings/Settings}"
-        with patch("autoblockblast.phone.time.sleep"), self.assertRaisesRegex(RuntimeError, "not in front"):
+        command = device.shell2.call_args.args[0]
+        self.assertIn("dumpsys -t 1 input", command)
+        self.assertNotIn("dumpsys window", command)
+        for denied in (
+            game.replace("com.block.juggle", "com.android.settings"),
+            game.replace("com.block.juggle", "com.block.juggle.fake"),
+            game.replace("FocusedDisplayId: 0", "FocusedDisplayId: 2"),
+            "FocusedDisplayId: 0",
+        ):
+            with self.subTest(output=denied):
+                device.shell2.return_value = SimpleNamespace(returncode=0, output=denied)
+                with patch("autoblockblast.phone.time.sleep"), self.assertRaisesRegex(RuntimeError, "not in front"):
+                    require_game(device)
+        device.shell2.return_value = SimpleNamespace(returncode=1, output=game)
+        with self.assertRaisesRegex(RuntimeError, "input focus unavailable"):
             require_game(device)
 
     def test_stop_request_interrupts_before_next_action(self):
@@ -272,9 +286,10 @@ class VerifiedPlayTests(unittest.TestCase):
     def test_stale_frames_are_not_analyzed(self):
         stream = Mock(alive=True)
         stream.snapshot.return_value = (np.zeros((800, 360, 3), dtype=np.uint8), 0.0)
-        with patch("autoblockblast.autoplay.require_game"), patch("autoblockblast.autoplay.check_stop"), patch("autoblockblast.autoplay.analyze") as analyze:
+        with patch("autoblockblast.autoplay.require_game") as focus, patch("autoblockblast.autoplay.check_stop"), patch("autoblockblast.autoplay.analyze") as analyze:
             with self.assertRaisesRegex(RuntimeError, "fresh, stable"):
                 read_stable(Mock(), stream, timeout=0.01)
+        focus.assert_called_once()
         analyze.assert_not_called()
 
     def test_invalid_animation_frame_cannot_satisfy_stability(self):

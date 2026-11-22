@@ -76,9 +76,10 @@ def read_stable(device, stream, *, after=0.0, timeout=8.0, need_pieces=True, exp
     previous_at = 0.0
     seen_at = after
     saw_valid_state = False
+    check_stop()
+    require_game(device)
     while time.monotonic() < deadline:
         check_stop()
-        require_game(device)
         if not stream.alive:
             raise RuntimeError("Phone video stream stopped. Reconnect and restart the bot.")
         frame, received_at = stream.snapshot(after=seen_at)
@@ -86,6 +87,7 @@ def read_stable(device, stream, *, after=0.0, timeout=8.0, need_pieces=True, exp
             time.sleep(0.04)
             continue
         seen_at = received_at
+        require_game(device)
         emit_metrics_frame(frame)
         state = analyze(frame)
         invalid_piece = any(p.size and (max(p.shape) > 5 or p.sum() > 9) for p in state.pieces)
