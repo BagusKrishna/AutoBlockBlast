@@ -5,12 +5,30 @@ import unittest
 import cv2 as cv
 import numpy as np
 
-from autoblockblast.vision import analyze, parse_pieces, pickup_geometry
+from autoblockblast.vision import analyze, parse_board, parse_pieces, pickup_geometry
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class ScreenFixtures(unittest.TestCase):
+    def test_orange_board_with_colored_edges_keeps_empty_cells(self):
+        rows = [
+            "###...##", "..##..##", "....####", "..#.####",
+            "..##.###", ".#....#.", "####...#", "#.###.##",
+        ]
+        board = np.array([[cell == "#" for cell in row] for row in rows])
+        cells = np.where(board[..., None], (112, 216, 182), (9, 188, 69))
+        hsv = cells.repeat(40, axis=0).repeat(40, axis=1).astype(np.uint8)
+        hsv[:5] = (11, 180, 69)
+        hsv[-5:] = (60, 214, 100)
+        hsv[:, :5] = (8, 205, 66)
+        hsv[:, -5:] = (112, 216, 182)
+
+        frame = cv.cvtColor(hsv, cv.COLOR_HSV2BGR)
+        actual, _ = parse_board(frame, board_rect=(0, 0, 1, 1))
+
+        np.testing.assert_array_equal(actual, board)
+
     def test_long_bar_does_not_bleed_into_empty_middle_slot(self):
         for x, slot in ((31, 0), (238, 2)):
             with self.subTest(slot=slot):

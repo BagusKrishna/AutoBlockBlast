@@ -225,7 +225,12 @@ def _shape_from_centroids(pts: list[tuple[float, float]]) -> np.ndarray:
     return _trim_piece(grid)
 
 
-def _board_background(crop_hsv: np.ndarray, samples: np.ndarray) -> tuple[float, float, float]:
+def _matches_background(pixels: np.ndarray, background: np.ndarray) -> np.ndarray:
+    hue, saturation, value = np.abs(pixels - background).T
+    return (np.minimum(hue, 180 - hue) <= 12) & (saturation <= 35) & (value <= 40)
+
+
+def _board_background(crop_hsv: np.ndarray, samples: np.ndarray) -> np.ndarray | None:
     gh, gw = crop_hsv.shape[:2]
     band = max(2, min(gh, gw) // 64)
     strips = [
@@ -235,17 +240,24 @@ def _board_background(crop_hsv: np.ndarray, samples: np.ndarray) -> tuple[float,
         crop_hsv[:, -band:].reshape(-1, 3),
     ]
     edge = np.vstack(strips)
-    edge_bg = np.median(edge, axis=0)
+    matching = _matches_background(samples, np.median(edge, axis=0))
+    if matching.any():
+        return np.median(samples[matching], axis=0)
 
-    dh = np.abs(samples[:, 0] - edge_bg[0])
-    circ_dh = np.minimum(dh, 180 - dh)
-    ds = np.abs(samples[:, 1] - edge_bg[1])
-    dv = np.abs(samples[:, 2] - edge_bg[2])
-    candidates = (circ_dh <= 12) & (ds <= 35) & (dv <= 40)
-    if candidates.any():
-        bg = np.median(samples[candidates], axis=0)
-        return float(bg[0]), float(bg[1]), float(bg[2])
-    return float(edge_bg[0]), float(edge_bg[1]), float(edge_bg[2])
+    # Blocks along different edges can make the pooled HSV median miss every cell.
+    best_match = None
+    best_support = 0
+    for strip in strips:
+        background = np.median(strip, axis=0)
+        matching = _matches_background(samples, background)
+        if matching.any():
+            support = np.count_nonzero(_matches_background(edge, background))
+            if support > best_support:
+                best_match = matching
+                best_support = support
+    if best_match is None:
+        return None
+    return np.median(samples[best_match], axis=0)
 
 
 def parse_board(frame: np.ndarray, board_rect: config.Rect | None = None) -> tuple[np.ndarray, np.ndarray]:
@@ -260,12 +272,15 @@ def parse_board(frame: np.ndarray, board_rect: config.Rect | None = None) -> tup
     ys = points[:, 0, None, None] + offsets[None, :, None]
     xs = points[:, 1, None, None] + offsets[None, None, :]
     samples = np.median(hsv[ys, xs], axis=(1, 2))
-    bg_h, bg_s, bg_v = _board_background(hsv, samples)
-    delta_h = np.abs(samples[:, 0] - bg_h)
-    circ_dh = np.minimum(delta_h, 180 - delta_h)
-    delta_s = np.abs(samples[:, 1] - bg_s)
-    delta_v = np.abs(samples[:, 2] - bg_v)
-    occupied = (circ_dh > 8) | (delta_s > 25) | (delta_v > 25)
+    background = _board_background(hsv, samples)
+    if background is None:
+        _, saturation, value = samples.T
+        occupied = (value >= config.CELL_V_MIN) | (
+            (value >= config.CELL_V_MIN - 25) & (saturation >= config.CELL_S_MIN)
+        )
+    else:
+        hue, saturation, value = np.abs(samples - background).T
+        occupied = (np.minimum(hue, 180 - hue) > 8) | (saturation > 25) | (value > 25)
     board = occupied.reshape(n, n).astype(np.int8)
     return board, crop
 
