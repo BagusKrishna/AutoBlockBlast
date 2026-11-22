@@ -15,7 +15,7 @@ from autoblockblast import config
 from autoblockblast.controller import Controller
 from autoblockblast.phone import get_device, physical_size, require_game
 from autoblockblast.scrcpy_stream import ScrcpyStream
-from autoblockblast.solver import apply_move, format_solution, solve, solve_exact
+from autoblockblast.solver import apply_move, format_solution, iter_placements, solve, solve_exact
 from autoblockblast.vision import analyze, format_state, render_debug, same_board_and_tray
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -183,15 +183,37 @@ def verify_transition(before, after, placement):
         changed = np.argwhere(after.board != expected)
         locations = ", ".join(f"({int(r)+1},{int(c)+1})" for r, c in changed[:8])
         raise RuntimeError(f"Stopped: the board differs from the prediction in {len(changed)} cells at row,column {locations}. See captures/last-failure/.")
-    remaining = [i for i, p in enumerate(before.pieces) if p.size and i != placement.piece_index]
+    verify_tray_transition(before, after, placement.piece_index)
+
+
+def verify_tray_transition(before, after, piece_index):
+    remaining = [i for i, p in enumerate(before.pieces) if p.size and i != piece_index]
     if remaining:
-        if after.pieces[placement.piece_index].size:
+        if after.pieces[piece_index].size:
             raise RuntimeError("Stopped: the dragged piece is still in its tray slot.")
-        if any(not np.array_equal(before.pieces[i], after.pieces[i]) for i in range(len(before.pieces)) if i != placement.piece_index):
+        if any(not np.array_equal(before.pieces[i], after.pieces[i]) for i in range(len(before.pieces)) if i != piece_index):
             raise RuntimeError("Stopped: another tray piece changed unexpectedly.")
 
     elif not all(piece.size for piece in after.pieces):
         raise RuntimeError("Waiting for a complete tray refill after the last piece.")
+
+
+def find_shifted_placement(before, observed, intended):
+    if np.array_equal(observed.board, before.board):
+        return None
+    try:
+        verify_tray_transition(before, observed, intended.piece_index)
+    except RuntimeError:
+        return None
+    piece = before.pieces[intended.piece_index]
+    match = None
+    for row, col in iter_placements(before.board, piece):
+        board, _ = apply_move(before.board, piece, row, col)
+        if np.array_equal(board, observed.board):
+            if match is not None:
+                return None
+            match = replace(intended, row=row, col=col)
+    return match if match != intended else None
 
 
 def save_debug(device, frame, state, name):
@@ -229,7 +251,7 @@ def save_failure(device, before, placement, failure, *, before_frame, before_at,
 
 
 def wait_verified(device, stream, before, placement, *, after, before_frame=None, before_at=None,
-                  debug=False, early_clear=False):
+                  debug=False, early_clear=False, recover_shifted=False):
     board, cleared = apply_move(
         before.board, before.pieces[placement.piece_index], placement.row, placement.col
     )
@@ -250,6 +272,8 @@ def wait_verified(device, stream, before, placement, *, after, before_frame=None
     cursor = after
     failure = None
     observed = None
+    shifted_key = None
+    shifted_at = 0.0
     while time.monotonic() < deadline:
         try:
             observed = read_stable(device, stream, after=cursor, timeout=max(0, deadline - time.monotonic()), need_pieces=False,
@@ -268,8 +292,21 @@ def wait_verified(device, stream, before, placement, *, after, before_frame=None
                     "Stopped: the game screen stayed dim after an all-clear. "
                     "Check Block Blast before restarting. See captures/last-failure/."
                 )
+                shifted_key = None
             else:
                 failure = exc
+                if recover_shifted and not np.array_equal(state.board, board):
+                    key = state_key(state)
+                    if key == shifted_key:
+                        if cursor - shifted_at >= 0.15 and cursor - after >= 0.5:
+                            if debug:
+                                save_debug(device, frame, state, "after.png")
+                            return observed
+                        continue
+                    if find_shifted_placement(before, state, placement) is not None:
+                        shifted_key, shifted_at = key, cursor
+                        continue
+                shifted_key = None
             continue
         if debug:
             save_debug(device, frame, state, "after.png")
@@ -434,7 +471,7 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
             try:
                 verified = wait_verified(device, stream, current, placement, after=released,
                                          before_frame=frame, before_at=current_at, debug=debug,
-                                         early_clear=early_clear or chain_tray)
+                                         early_clear=early_clear or chain_tray, recover_shifted=True)
             except SwipeDidNotLand as exc:
                 retry_ms = 250
                 if drag_ms is not None or config.DRAG_MS >= retry_ms:
@@ -456,18 +493,28 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
                 )
                 retried = True
                 verified = wait_verified(device, stream, retry_state, placement, after=retry_release,
-                                         before_frame=retry_frame, before_at=retry_at, debug=debug)
+                                         before_frame=retry_frame, before_at=retry_at, debug=debug,
+                                         recover_shifted=True)
+            expected, cleared = apply_move(
+                current.board, current.pieces[placement.piece_index], placement.row, placement.col
+            )
+            shifted = not np.array_equal(verified[1].board, expected)
+            if shifted:
+                actual = find_shifted_placement(current, verified[1], placement)
+                if actual is None:
+                    raise RuntimeError("Stopped: the shifted placement could not be confirmed.")
+                print(f"Swipe landed at row {actual.row + 1}, column {actual.col + 1}; recalculating from the verified board.", flush=True)
+                placement = actual
+                _, cleared = apply_move(
+                    current.board, current.pieces[placement.piece_index], placement.row, placement.col
+                )
             if sum(bool(piece.size) for piece in current.pieces) == 1:
                 all_clear_earned = False
             else:
                 all_clear_earned |= not verified[1].board.any()
             finished = time.monotonic()
             remaining_plan = None
-            if reuse_plan or audit:
-                _, cleared = apply_move(
-                    current.board, current.pieces[placement.piece_index], placement.row, placement.col
-                )
-            if reuse_plan and len(plan.placements) > 1:
+            if reuse_plan and not shifted and len(plan.placements) > 1:
                 # wait_verified has already matched the predicted board and remaining tray.
                 remaining_plan = replace(
                     plan, placements=plan.placements[1:],

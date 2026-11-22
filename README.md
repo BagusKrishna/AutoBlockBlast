@@ -113,7 +113,7 @@ Use `--solver beam` to compare the original ranking or `--solver beam-all-clear`
 ## Troubleshooting
 
 - **No fresh, stable game state.** Keep the game visible, dismiss any overlays, and wait for animations to settle. Run preview to check the board and tray before resuming autoplay.
-- **Board or tray mismatch.** Open `captures/last-failure/transition.json` to inspect the expected and observed states. Keep any accompanying images local.
+- **Board or tray mismatch.** If two stable reads confirm exactly one alternate legal landing and the expected tray transition, the bot recalculates from that board. For a mismatch that cannot be verified, open `captures/last-failure/transition.json` to inspect the expected and observed states. Keep any accompanying images local.
 - **Changes appear missing.** Run the command from the `AutoBlockBlast` checkout that contains this README. The original `blockblast-vision-bot` checkout has a separate entry point.
 
 ## Tests

@@ -188,11 +188,14 @@ class VerifiedPlayTests(unittest.TestCase):
         next_state.board, _ = apply_move(self.board, self.before.pieces[first.piece_index], first.row, first.col)
         next_state.pieces = self.before.pieces.copy()
         next_state.pieces[first.piece_index] = self.empty
+        final_board, _ = apply_move(next_state.board, next_state.pieces[second.piece_index], second.row, second.col)
+        final_state = SimpleNamespace(board=final_board, pieces=[self.single] * 3)
         with patch.multiple(
             "autoblockblast.autoplay", get_device=Mock(), require_game=Mock(),
             physical_size=Mock(return_value=(1080, 2400)), Controller=Mock(),
             ScrcpyStream=Mock(), check_stop=Mock(), wait_if_paused=Mock(return_value=False),
-            solve_exact=Mock(return_value=plan), wait_verified=Mock(return_value=(frame, next_state, 3)),
+            solve_exact=Mock(return_value=plan),
+            wait_verified=Mock(side_effect=[(frame, next_state, 3), (frame, final_state, 5)]),
             read_stable=Mock(side_effect=[(frame, self.before, 1), (frame, self.before, 2),
                                           (frame, next_state, 4)]),
         ):
@@ -200,6 +203,32 @@ class VerifiedPlayTests(unittest.TestCase):
             autoplay.solve_exact.assert_called_once()
             calls = autoplay.Controller.return_value.drag_piece.call_args_list
             self.assertEqual([call.args[2] for call in calls], [first, second])
+
+    def test_shifted_swipe_discards_remaining_plan_and_recalculates(self):
+        from autoblockblast import autoplay
+        frame = np.zeros((80, 36, 3), dtype=np.uint8)
+        first = Placement(0, 0, 0)
+        stale = Placement(1, 0, 1)
+        replacement = Placement(1, 1, 0)
+        actual_board, _ = apply_move(self.board, self.single, stale.row, stale.col)
+        actual = SimpleNamespace(board=actual_board, pieces=[self.empty, self.single, self.empty])
+        final_board, _ = apply_move(actual_board, self.single, replacement.row, replacement.col)
+        final = SimpleNamespace(board=final_board, pieces=[self.single] * 3)
+        plans = [SimpleNamespace(complete=True, placements=[first, stale]),
+                 SimpleNamespace(complete=True, placements=[replacement])]
+        with patch.multiple(
+            "autoblockblast.autoplay", get_device=Mock(), require_game=Mock(),
+            physical_size=Mock(return_value=(1080, 2400)), Controller=Mock(),
+            ScrcpyStream=Mock(), check_stop=Mock(), wait_if_paused=Mock(return_value=False),
+            solve_exact=Mock(side_effect=plans), format_solution=Mock(),
+            read_stable=Mock(side_effect=[(frame, self.before, 1), (frame, self.before, 2),
+                                         (frame, actual, 4)]),
+            wait_verified=Mock(side_effect=[(frame, actual, 3), (frame, final, 5)]),
+        ):
+            run(execute=True, moves=2, reuse_plan=True)
+            self.assertIs(autoplay.solve_exact.call_args.args[0], actual_board)
+            calls = autoplay.Controller.return_value.drag_piece.call_args_list
+            self.assertEqual([call.args[2] for call in calls], [first, replacement])
 
     def test_unchanged_board_allows_one_slower_retry_with_fresh_pickup(self):
         from autoblockblast import autoplay
@@ -342,6 +371,27 @@ class VerifiedPlayTests(unittest.TestCase):
                 _, result, _ = wait_verified(Mock(), Mock(), self.before, self.placement, after=0)
         self.assertIs(result, settled)
         self.assertEqual(read.call_count, 2)
+
+    def test_shifted_swipe_requires_corroboration_and_unchanged_remaining_tray(self):
+        shifted, _ = apply_move(self.board, self.single, 1, 0)
+        observed = SimpleNamespace(board=shifted, pieces=[self.empty, self.single, self.empty])
+        mismatched = SimpleNamespace(board=shifted, pieces=[self.empty] * 3)
+        for states, accepted in (([observed, observed], True),
+                                 ([observed], False), ([mismatched, mismatched], False)):
+            with self.subTest(accepted=accepted, samples=len(states)), patch(
+                "autoblockblast.autoplay.read_stable",
+                side_effect=[(None, state, (index + 1) * 0.3) for index, state in enumerate(states)]
+                + [StableReadTimeout("timeout")],
+            ):
+                if accepted:
+                    _, result, stamp = wait_verified(
+                        Mock(), Mock(), self.before, self.placement, after=0, recover_shifted=True
+                    )
+                    self.assertIs(result, observed)
+                    self.assertEqual(stamp, 0.6)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "board differs"):
+                        wait_verified(Mock(), Mock(), self.before, self.placement, after=0, recover_shifted=True)
 
     def test_dimmed_all_clear_extends_verification_without_accepting_a_mismatch(self):
         board = self.board.copy()
