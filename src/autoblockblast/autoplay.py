@@ -21,6 +21,7 @@ from autoblockblast.vision import analyze, format_state, render_debug, same_boar
 ROOT = Path(__file__).resolve().parents[2]
 STOP_FILE = ROOT / "captures" / "stop.request"
 PAUSE_FILE = ROOT / "captures" / "pause.request"
+SOLVER_FILE = ROOT / "captures" / "solver-mode"
 UI_METRICS = False
 _last_metrics_at = 0.0
 _metrics_ready = False
@@ -364,6 +365,13 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
                 verified = None
                 remaining_plan = None
                 initial_plan = None
+            if UI_METRICS and solver in ("exact", "exact-one-line"):
+                mode = SOLVER_FILE.read_text().strip()
+                if mode not in ("exact", "exact-one-line"):
+                    raise RuntimeError("Invalid solver selection.")
+                if mode != solver:
+                    solver = mode
+                    verified = remaining_plan = initial_plan = None
             started = time.monotonic()
             planning_frame, state, state_at = verified if verified is not None else read_stable(device, stream)
             ready = time.monotonic()
@@ -373,8 +381,9 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
             solve_started = time.monotonic()
             if remaining_plan is not None:
                 plan = remaining_plan
-            elif solver == "exact":
-                plan = solve_exact(state.board, state.pieces, all_clear_earned=all_clear_earned)
+            elif solver in ("exact", "exact-one-line"):
+                plan = solve_exact(state.board, state.pieces, all_clear_earned=all_clear_earned,
+                                   **({"one_line": True} if solver == "exact-one-line" else {}))
             else:
                 plan = solve(state.board, state.pieces, all_clear_first=solver == "beam-all-clear")
             planned = time.monotonic()
@@ -567,7 +576,7 @@ def main():
     parser.add_argument("--compare-recheck", action="store_true", help="Alternate stable and quick rechecks by tray in a bounded audit")
     parser.add_argument("--audit", action="store_true", help="Append local timing and plan comparisons to captures/audit.jsonl")
     parser.add_argument("--ui-metrics", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--solver", choices=("exact", "beam", "beam-all-clear"), default="exact")
+    parser.add_argument("--solver", choices=("exact", "exact-one-line", "beam", "beam-all-clear"), default="exact")
     args = parser.parse_args()
     global UI_METRICS
     UI_METRICS = args.ui_metrics
@@ -577,7 +586,7 @@ def main():
         parser.error("--early-clear requires --execute and a positive --moves")
     if args.chain_tray and (not args.reuse_plan or not args.execute):
         parser.error("--chain-tray requires --reuse-plan and --execute")
-    if args.reuse_plan and (args.audit or args.solver != "exact"):
+    if args.reuse_plan and (args.audit or args.solver not in ("exact", "exact-one-line")):
         parser.error("--reuse-plan requires the exact solver and cannot be combined with --audit")
     if args.compare_recheck and (args.fast_recheck or not args.audit or not args.execute or args.moves <= 0):
         parser.error("--compare-recheck requires --audit, --execute and a positive --moves, without --fast-recheck")

@@ -102,6 +102,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
         return formatter
     }()
     let sessionLine = NSTextField(labelWithString: "")
+    let solverMenu = NSPopUpButton(frame: .zero, pullsDown: false)
     var sessionTimer: Timer?
     var sessionStartedAt: TimeInterval?
     var elapsedSessionTime: TimeInterval = 0
@@ -205,7 +206,9 @@ final class BotApp: NSObject, NSApplicationDelegate {
         statusIcon.widthAnchor.constraint(equalToConstant: 16).isActive = true
         statusIcon.heightAnchor.constraint(equalToConstant: 16).isActive = true
         statusIcon.isHidden = true
-        let statusLine = NSStackView(views: [statusIcon, status])
+        solverMenu.addItems(withTitles: ["MultiLine", "OneLine"])
+        solverMenu.controlSize = .small
+        let statusLine = NSStackView(views: [statusIcon, status, solverMenu])
         statusLine.spacing = 8
         sessionLine.alignment = .left
         sessionLine.lineBreakMode = .byTruncatingTail
@@ -344,6 +347,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
         pauseButton.isEnabled = process != nil && !stopping
         stopButton.isEnabled = process != nil && !stopping
         pauseButton.title = paused ? "Resume" : "Pause"
+        solverMenu.isEnabled = process == nil || (paused && status.stringValue == "Paused")
     }
 
     func explanationForStop(_ message: String) -> String {
@@ -408,6 +412,9 @@ final class BotApp: NSObject, NSApplicationDelegate {
         do {
             try FileManager.default.createDirectory(at: captureDirectory, withIntermediateDirectories: true)
             try? FileManager.default.removeItem(at: pauseFile)
+            try (solverMenu.indexOfSelectedItem == 1 ? "exact-one-line" : "exact").write(
+                to: captureDirectory.appendingPathComponent("solver-mode"), atomically: true, encoding: .utf8
+            )
             let task = Process()
             task.executableURL = root.appendingPathComponent(".venv/bin/python")
             task.currentDirectoryURL = root
@@ -419,6 +426,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
             task.arguments = [
                 "-u", "-m", "autoblockblast.autoplay", "--execute", "--moves", "0",
                 "--ui-metrics", "--fast-recheck", "--reuse-plan", "--chain-tray",
+                "--solver", solverMenu.indexOfSelectedItem == 1 ? "exact-one-line" : "exact",
             ]
             let pipe = Pipe()
             task.standardOutput = pipe
@@ -540,7 +548,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
             }
         }
         if status.stringValue != previousStatus || moveCount != previousMoveCount {
-            updateSessionLine()
+            refreshButtons()
         }
     }
 
@@ -612,6 +620,10 @@ final class BotApp: NSObject, NSApplicationDelegate {
         guard process != nil, !stopping else { return }
         do {
             if paused {
+                guard status.stringValue == "Paused" else { return }
+                try (solverMenu.indexOfSelectedItem == 1 ? "exact-one-line" : "exact").write(
+                    to: captureDirectory.appendingPathComponent("solver-mode"), atomically: true, encoding: .utf8
+                )
                 try FileManager.default.removeItem(at: pauseFile)
                 paused = false
                 status.stringValue = "Resuming…"

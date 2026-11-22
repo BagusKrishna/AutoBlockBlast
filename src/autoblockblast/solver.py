@@ -285,7 +285,7 @@ def _future_flexibility(bits):
     return total
 
 
-def solve_exact(board: np.ndarray, pieces: list[np.ndarray], *, all_clear_earned=False) -> SolveResult | None:
+def solve_exact(board: np.ndarray, pieces: list[np.ndarray], *, all_clear_earned=False, one_line=False) -> SolveResult | None:
     """Find a complete tray, favoring all-clears and concentrated line clears."""
     if board.shape != (8, 8):
         raise ValueError("Exact search requires an 8×8 board.")
@@ -314,7 +314,7 @@ def solve_exact(board: np.ndarray, pieces: list[np.ndarray], *, all_clear_earned
             return
         visited.add(key)
         if not remaining:
-            primary = (all_clear, clear_weight, lines, clear_moves)
+            primary = (all_clear, clear_moves, lines, clear_weight) if one_line else (all_clear, clear_weight, lines, clear_moves)
             if best_rank is not None and primary < best_rank[:4]:
                 return
             rank = (*primary, _future_flexibility(bits), -bits.bit_count())
@@ -335,7 +335,8 @@ def solve_exact(board: np.ndarray, pieces: list[np.ndarray], *, all_clear_earned
     search(_bits(board), tuple(options), (), all_clear_earned, 0, 0, 0)
     if best_rank is None:
         return None
-    all_clear, _, lines, clear_moves, flexibility, _ = best_rank
+    all_clear, first, lines, fourth, flexibility, _ = best_rank
+    clear_moves = first if one_line else fourth
     return SolveResult(
         [Placement(*move) for move in best_path], float(flexibility), _bit_board(best_board),
         lines, clear_moves, all_clear=all_clear, method="exact DFS",
