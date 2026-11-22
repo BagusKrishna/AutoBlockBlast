@@ -109,38 +109,61 @@ final class BotApp: NSObject, NSApplicationDelegate {
     private var playAnimationStartedAt: TimeInterval = 0
     private let detailFont = NSFont.systemFont(ofSize: 14)
     private let storyFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
-    private let storyScenes = [
-        // The walker spots something ahead.
-        [
-            " o             .\n/|\\\n/ \\",
-            "   o           .\n  /|>\n  /|",
-            "     o         .\n    \\|/\n    / \\",
-            "       o       .\n      /|>\n      /|",
-        ],
-        // Up close, it's a donut.
-        [
-            "         o       .---.\n        /|>     ( ( ) )\n        / \\      '---'",
-            "         o     * .---.\n        /|>     ( ( ) )\n        / \\      '---'",
-            "         o       .---. *\n        /|>     ( ( ) )\n        / \\      '---'",
-        ],
-        // The donut flashes and becomes an orb.
-        [
-            "           *     .---.\n      o         ( ( ) ) *\n     /|>         '---'",
-            "            \\    |    /\n      o       -- O --\n     / \\    /    |    \\",
-            "                 .-.\n      o        *( + )*\n     /|\\         '-'",
-        ],
-        // The orb lights up a tiny rocket.
-        [
-            "                  /\\\n       .-.       /  \\\n      ( + )     | [] |",
-            "                  /\\\n           .-.   /  \\\n          ( + )>| [] |",
-            "                  /\\\n                 /  \\\n                | +  |",
-        ],
-        // Liftoff.
-        [
-            "                  /\\\n                 |+ |\n                /_vv_\\",
-            "                  /\\\n                /_vv_\\\n                 '  '",
-            "            *     ^     *\n                '   '\n           .               .",
-        ],
+    private let duelFrames = [
+        // The fighters approach.
+        " o           o\n/|\\         /|\\\n/ \\         / \\",
+        "  o          o\n /|>        <|\\\n /|          |\\",
+        "   o        o\n  /|\\      /|\\\n  / \\      / \\",
+        "    o      o\n   /|>    <|\\\n   /|      |\\",
+        "     o     o\n    /|\\   /|\\\n    / \\   / \\",
+        "     o     o\n    /|>   <|\\\n    / \\   / \\",
+        "     o     o\n    /|-- --|\\\n    / \\   / \\",
+        "     o     o\n    /|/   \\|\\\n    / \\   / \\",
+        // They trade the first blows.
+        "     o     o\n    /|---*-|\\\n    / \\   / \\",
+        "     o      o\n    /|>  \\==|\\\n    / \\    /|\\",
+        "      o     o\n     /|=+==|\\\n     /\\    / \\",
+        "    o      o\n   <|\\   ==|\\\n   /|      / \\",
+        "   o       o\n  /|\\    ==|\\\n  / \\      /|\\",
+        "    o     o\n   /|--+--|\\\n   /|     |\\",
+        "    o     o\n   /|--*--|\\\n   / \\   / \\",
+        "   o       o\n  /|>     <|\\\n  / \\     / \\",
+        // A feint, a duck, and a counter.
+        "    o      o\n   /|>    <|\\\n   /|     / \\",
+        "     o     o\n    /|----/|\\\n    / \\   / \\",
+        "     o\n    /|-----   o\n    / \\     /_>",
+        "     o       o\n    /|>    <=|\\\n    / \\     /|\\",
+        "    o       o\n   /|\\-=+===|\\\n   /|      / \\",
+        "   o        o\n  <|\\      /|\\\n  /|       / \\",
+        "            o\n   o      <=|\\\n  <_\\      / \\",
+        "   o       o\n  /|>     <|\\\n  / \\     /|\\",
+        // Both rush in, and the blades fly loose.
+        "    o     o\n   /|>   <|\\\n   /|     |\\",
+        "     o   o\n    /|>-<|\\\n    /|   |\\",
+        "     o * o\n    /|>-<|\\\n    / \\ / \\",
+        "   o  * *  o\n  /|\\     /|\\\n  / \\     / \\",
+        "  o ~     ~ o\n /|\\       /|\\\n / \\       / \\",
+        "  o         o\n /|\\       /|\\\n / \\ -   - / \\",
+        "   o       o\n  /|>     <|\\\n  / \\ - - / \\",
+        "    o     o\n   <|\\   /|>\n   / \\ - / \\",
+        // They eye the fallen blades and call a truce.
+        "    o     o\n   /|\\   /|\\\n   / \\ - / \\",
+        "    o     o\n   /|\\   \\|\\\n   / \\ - / \\",
+        "    o     o\n   /|/   \\|\\\n   / \\ - / \\",
+        "    o     o\n   /|/   \\|/\n   / \\   / \\",
+        "     o   o\n    /|> <|\\\n    / \\ / \\",
+        "     o   o\n    /|>-<|\\\n    / \\ / \\",
+        "     o   o\n    \\|>-<|/\n    / \\ / \\",
+        "     o   o\n    /|>-<|\\\n    /|   |\\",
+        // They bow, then reset for a rematch.
+        "     o   o\n    /|\\ /|\\\n    / \\ / \\",
+        "     _   _\n     _o o_\n    /|   |\\",
+        "     o   o\n    /|\\ /|\\\n    / \\ / \\",
+        "    o     o\n   <|\\   /|>\n    |\\   /|",
+        "   o       o\n  /|\\     /|\\\n  / \\     / \\",
+        "  o         o\n <|\\       /|>\n  |\\       /|",
+        " o           o\n/|\\         /|\\\n/ \\         / \\",
+        " o           o\n/|>         <|\\\n/ \\         / \\",
     ]
     let startButton = NSButton(title: "Start", target: nil, action: nil)
     let pauseButton = NSButton(title: "Pause", target: nil, action: nil)
@@ -304,7 +327,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
             detail.font = storyFont
             detail.setAccessibilityLabel("Autoplay in progress")
             playAnimationStartedAt = ProcessInfo.processInfo.systemUptime
-            playAnimationTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            playAnimationTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
                 self?.updatePlayingAnimation()
             }
         }
@@ -312,20 +335,14 @@ final class BotApp: NSObject, NSApplicationDelegate {
     }
 
     private func updatePlayingAnimation() {
-        let elapsed = ProcessInfo.processInfo.systemUptime - playAnimationStartedAt
+        let second = Int(ProcessInfo.processInfo.systemUptime - playAnimationStartedAt)
         let text: String
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            text = storyScenes[1][0]
-        } else if elapsed < 2 {
-            let dots = min(3, Int(elapsed / 0.5) + 1)
-            text = String(repeating: ". ", count: dots - 1) + "."
+            text = duelFrames[0]
+        } else if second < 2 {
+            text = second == 0 ? "." : ". . ."
         } else {
-            let sceneDuration = 6.0
-            let storyTime = elapsed - 2
-            let scene = storyScenes[Int(storyTime / sceneDuration) % storyScenes.count]
-            let sceneTime = storyTime.truncatingRemainder(dividingBy: sceneDuration)
-            let frame = Int(sceneTime / sceneDuration * Double(scene.count))
-            text = scene[frame]
+            text = duelFrames[(second - 2) % duelFrames.count]
         }
         if detail.stringValue != text {
             detail.stringValue = text
