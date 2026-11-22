@@ -21,7 +21,7 @@ The recording shows five verified placements and a score increase from **835,965
 
 Other Android devices may need board, tray and drag calibration. The tested setup covers Android. Support for additional game themes and device layouts depends on validation.
 
-The default solver searches every legal order and position for the pieces it can see. It favors any all-clear in a plan that uses the tray, then the number of placements that clear lines, the total lines cleared, and space for future pieces. Clear counts approximate the game's combo and scoring behavior.
+The default solver searches every legal order and position for the pieces it can see. It first favors a complete tray that produces an all-clear. It then favors clearing multiple lines in the same placement by adding the square of each placement's clear count. Total lines, number of clearing placements and space for future pieces break ties. The weighting is a scoring heuristic.
 
 ## Setup
 
@@ -108,7 +108,7 @@ Audit results are appended locally to `captures/audit.jsonl`, which is ignored b
 
 The Mac app uses the faster pre-drag check and reuses the remaining exact plan after each verified move. The faster pre-drag check confirms that a fresh video frame matches the previously stabilized board and tray. If the frame differs or fails to arrive promptly, it falls back to the full stable read. The bot verifies every placement against the predicted board and tray before reusing the rest of a plan. Resuming after a pause starts with a fresh board read and calculation. The app uses `--chain-tray` to reuse the recent verified frame for the next move within a tray. If a newer frame is available, the bot checks it immediately and falls back to the regular pre-drag check if the decoded board or tray differs. It reuses pickup coordinates when they match the last state and takes updated coordinates from the existing frame read if the piece shifted. The foreground and post-drag checks still run. In chained play, two fresh frames that match the full predicted board and remaining tray can confirm a clear without a minimum time gap between the frames. The app can continue while an effect is still visible if the board and tray match. Tray refills still use the full stability check. If a pre-drag read differs, the bot waits for the original state or corroborates the changed state with another stable read. It can recalculate once before the next swipe. When the solver finds no complete plan, it checks for a changed board or tray before stopping. Every swipe still requires post-drag verification.
 
-Use `--solver beam` to compare the original ranking or `--solver beam-all-clear` to compare width-40 beam search using the new ranking.
+Use `--solver beam` to compare the original beam search or `--solver beam-all-clear` to try width-40 beam search that prioritizes all-clear and individual clearing placements.
 
 ## Troubleshooting
 

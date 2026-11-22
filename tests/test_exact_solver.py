@@ -11,12 +11,12 @@ def oracle(board, pieces, earned=False):
     """Enumerate with NumPy collision and clear routines, without state merging."""
     rank, best = None, None
 
-    def visit(state, slots, path, all_clear, clear_moves, lines):
+    def visit(state, slots, path, all_clear, clear_weight, clear_moves, lines):
         nonlocal rank, best
         if not slots:
             counts = [count_placements(state, shape, 6) for shape in KEY_SHAPES]
             flexibility = sum(count + 5 * bool(count) for count in counts)
-            candidate = (all_clear, clear_moves, lines, flexibility, -int(state.sum()))
+            candidate = (all_clear, clear_weight, lines, clear_moves, flexibility, -int(state.sum()))
             if rank is None or candidate > rank:
                 rank, best = candidate, path
             return
@@ -25,9 +25,9 @@ def oracle(board, pieces, earned=False):
                 next_board, cleared = apply_move(state, pieces[slot], row, col)
                 visit(next_board, [i for i in slots if i != slot],
                       path + [Placement(slot, row, col)], all_clear or not next_board.any(),
-                      clear_moves + bool(cleared), lines + cleared)
+                      clear_weight + cleared**2, clear_moves + bool(cleared), lines + cleared)
 
-    visit(board, [i for i, piece in enumerate(pieces) if piece.size], [], earned, 0, 0)
+    visit(board, [i for i, piece in enumerate(pieces) if piece.size], [], earned, 0, 0, 0)
     return rank, best
 
 
@@ -50,6 +50,20 @@ class ExactSolverTests(unittest.TestCase):
         single = np.ones((1, 1), dtype=np.int8)
         self.assertFalse(solve_exact(board, [single] * 3).all_clear)
         self.assertTrue(solve_exact(board, [single], all_clear_earned=True).all_clear)
+
+    def test_concentrates_three_clears_in_one_placement(self):
+        board = np.zeros((8, 8), dtype=np.int8)
+        board[:3, :] = 1
+        board[:3, 3] = 0
+        board[7, 7] = 1
+        pieces = [np.ones((1, 1), dtype=np.int8)] * 2 + [np.ones((3, 1), dtype=np.int8)]
+        plan = solve_exact(board, pieces)
+        self.assertFalse(plan.all_clear)
+        clears = []
+        for move in plan.placements:
+            board, count = apply_move(board, pieces[move.piece_index], move.row, move.col)
+            clears.append(count)
+        self.assertEqual(clears, [0, 0, 3])
 
     def test_matches_exhaustive_numpy_oracle(self):
         rng = np.random.default_rng(6)
@@ -74,7 +88,7 @@ class ExactSolverTests(unittest.TestCase):
                     self.assertEqual(result.placements, path)
                     self.assertEqual(
                         (result.all_clear, result.clear_moves, result.lines_cleared, result.score),
-                        rank[:4],
+                        (rank[0], rank[3], rank[2], rank[4]),
                     )
 
     def test_no_complete_sequence(self):

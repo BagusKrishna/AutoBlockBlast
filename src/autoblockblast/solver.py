@@ -286,7 +286,7 @@ def _future_flexibility(bits):
 
 
 def solve_exact(board: np.ndarray, pieces: list[np.ndarray], *, all_clear_earned=False) -> SolveResult | None:
-    """Find the best complete 8×8 tray using observable clear counts as score proxies."""
+    """Find a complete tray, favoring all-clears and concentrated line clears."""
     if board.shape != (8, 8):
         raise ValueError("Exact search requires an 8×8 board.")
     options = {
@@ -303,19 +303,19 @@ def solve_exact(board: np.ndarray, pieces: list[np.ndarray], *, all_clear_earned
     no_line_possible = board.sum() + sum(piece.sum() for piece in pieces) < 8
     max_flexibility = sum(min(6, len(masks)) + 5 for masks in FLEX_MASKS)
 
-    def search(bits, remaining, path, all_clear, clear_moves, lines):
+    def search(bits, remaining, path, all_clear, clear_weight, clear_moves, lines):
         nonlocal best_rank, best_path, best_board
-        if no_line_possible and best_rank is not None and best_rank[3] == max_flexibility:
+        if no_line_possible and best_rank is not None and best_rank[4] == max_flexibility:
             return
         # Visits are in lexicographic path order, so the first identical state
         # also supplies its deterministic tie-break path.
-        key = (bits, remaining, all_clear, clear_moves, lines)
+        key = (bits, remaining, all_clear, clear_weight, clear_moves, lines)
         if key in visited:
             return
         visited.add(key)
         if not remaining:
-            primary = (all_clear, clear_moves, lines)
-            if best_rank is not None and primary < best_rank[:3]:
+            primary = (all_clear, clear_weight, lines, clear_moves)
+            if best_rank is not None and primary < best_rank[:4]:
                 return
             rank = (*primary, _future_flexibility(bits), -bits.bit_count())
             if best_rank is None or rank > best_rank:
@@ -329,12 +329,13 @@ def solve_exact(board: np.ndarray, pieces: list[np.ndarray], *, all_clear_earned
                     continue
                 new_board, cleared = _clear_bits(bits | mask)
                 search(new_board, rest, (*path, (slot, row, col)),
-                       all_clear or new_board == 0, clear_moves + bool(cleared), lines + cleared)
+                       all_clear or new_board == 0, clear_weight + cleared * cleared,
+                       clear_moves + bool(cleared), lines + cleared)
 
-    search(_bits(board), tuple(options), (), all_clear_earned, 0, 0)
+    search(_bits(board), tuple(options), (), all_clear_earned, 0, 0, 0)
     if best_rank is None:
         return None
-    all_clear, clear_moves, lines, flexibility, _ = best_rank
+    all_clear, _, lines, clear_moves, flexibility, _ = best_rank
     return SolveResult(
         [Placement(*move) for move in best_path], float(flexibility), _bit_board(best_board),
         lines, clear_moves, all_clear=all_clear, method="exact DFS",
