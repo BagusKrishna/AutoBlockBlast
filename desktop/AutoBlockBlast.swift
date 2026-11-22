@@ -108,62 +108,62 @@ final class BotApp: NSObject, NSApplicationDelegate {
     private var playAnimationTimer: Timer?
     private var playAnimationStartedAt: TimeInterval = 0
     private let detailFont = NSFont.systemFont(ofSize: 14)
-    private let storyFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+    private let storyFont = NSFont.monospacedSystemFont(ofSize: 10, weight: .medium)
     private let duelFrames = [
-        // The fighters approach.
-        " o           o\n/|\\         /|\\\n/ \\         / \\",
-        "  o          o\n /|>        <|\\\n /|          |\\",
-        "   o        o\n  /|\\      /|\\\n  / \\      / \\",
-        "    o      o\n   /|>    <|\\\n   /|      |\\",
-        "     o     o\n    /|\\   /|\\\n    / \\   / \\",
-        "     o     o\n    /|>   <|\\\n    / \\   / \\",
-        "     o     o\n    /|-- --|\\\n    / \\   / \\",
-        "     o     o\n    /|/   \\|\\\n    / \\   / \\",
+        // The fighters close in.
+        " .-.            .-.\n(o >)          (< x)\n/|#|\\          /|#|\\\n |=|            |=|\n/   \\          /   \\",
+        "  .-.          .-.\n (o >)        (< x)\n /|#|-        /|#|\\\n  |=|          |=|\n  / /         /   \\",
+        "  .-.          .-.\n (o >)        (< x)\n /|#|\\        -|#|\\\n  |=|          |=|\n /   \\         \\ \\",
+        "   .-.        .-.\n  (o >)      (< x)\n  /|#|-      /|#|\\\n   |=|        |=|\n   / /       /   \\",
+        "   .-.        .-.\n  (o >)      (< x)\n  /|#|\\      -|#|\\\n   |=|        |=|\n  /   \\       \\ \\",
+        "    .-.      .-.\n   (o >)    (< x)\n   /|#|-    /|#|\\\n    |=|      |=|\n    / /     /   \\",
+        "    .-.      .-.\n   (o >)    (< x)\n   /|#|\\    -|#|\\\n    |=|      |=|\n   /   \\     \\ \\",
+        "    .-.      .-.\n   (o >)    (< x)\n   /|#|\\ +  /|#|\\\n    |=|      |=|\n   /   \\    /   \\",
         // They trade the first blows.
-        "     o     o\n    /|---*-|\\\n    / \\   / \\",
-        "     o      o\n    /|>  \\==|\\\n    / \\    /|\\",
-        "      o     o\n     /|=+==|\\\n     /\\    / \\",
-        "    o      o\n   <|\\   ==|\\\n   /|      / \\",
-        "   o       o\n  /|\\    ==|\\\n  / \\      /|\\",
-        "    o     o\n   /|--+--|\\\n   /|     |\\",
-        "    o     o\n   /|--*--|\\\n   / \\   / \\",
-        "   o       o\n  /|>     <|\\\n  / \\     / \\",
+        "     .-.     .-.\n    (o>)    (< x)\n   /|#|=--* /|#|\\\n    |=|      |=|\n   /  /     /   \\",
+        "     .-.      .-.\n    (o>)     (x >)\n   /|#|_---  /|#|\\\n     |=\\       |=/\n    _/        / /",
+        "    .-.      .-.\n   (o >)    (< x)\n   /|#|\\  <=-|#|\\\n    |=|      |=|\n   /   \\     \\ \\",
+        "   .-.      .-.\n  (< o)     (<x)\n  /|#|\\ <---_|#|\\\n  \\=|       /=|\n   \\ \\        \\_",
+        "   .-.       .-.\n  (o >)   / (< x)\n  /|#|-     /|#|\\\n   |=|       |=|\n   / /      /   \\",
+        "     .-.    .-.\n    (o>)    (<x)\n   /|#|=-+- =|#|\\\n    |=|      |=|\n   /  /      \\  \\",
+        "    .-.      .-.\n   (o >)  . (< x)\n   /|#|\\    /|#|\\\n    |=|      |=|\n   /   \\    /   \\",
+        "   .-.        .-.\n  (o >)      (< x)\n  /|#|-      -|#|\\\n   |=|        |=|\n   / /        \\ \\",
         // A feint, a duck, and a counter.
-        "    o      o\n   /|>    <|\\\n   /|     / \\",
-        "     o     o\n    /|----/|\\\n    / \\   / \\",
-        "     o\n    /|-----   o\n    / \\     /_>",
-        "     o       o\n    /|>    <=|\\\n    / \\     /|\\",
-        "    o       o\n   /|\\-=+===|\\\n   /|      / \\",
-        "   o        o\n  <|\\      /|\\\n  /|       / \\",
-        "            o\n   o      <=|\\\n  <_\\      / \\",
-        "   o       o\n  /|>     <|\\\n  / \\     /|\\",
-        // Both rush in, and the blades fly loose.
-        "    o     o\n   /|>   <|\\\n   /|     |\\",
-        "     o   o\n    /|>-<|\\\n    /|   |\\",
-        "     o * o\n    /|>-<|\\\n    / \\ / \\",
-        "   o  * *  o\n  /|\\     /|\\\n  / \\     / \\",
-        "  o ~     ~ o\n /|\\       /|\\\n / \\       / \\",
-        "  o         o\n /|\\       /|\\\n / \\ -   - / \\",
-        "   o       o\n  /|>     <|\\\n  / \\ - - / \\",
-        "    o     o\n   <|\\   /|>\n   / \\ - / \\",
-        // They eye the fallen blades and call a truce.
-        "    o     o\n   /|\\   /|\\\n   / \\ - / \\",
-        "    o     o\n   /|\\   \\|\\\n   / \\ - / \\",
-        "    o     o\n   /|/   \\|\\\n   / \\ - / \\",
-        "    o     o\n   /|/   \\|/\n   / \\   / \\",
-        "     o   o\n    /|> <|\\\n    / \\ / \\",
-        "     o   o\n    /|>-<|\\\n    / \\ / \\",
-        "     o   o\n    \\|>-<|/\n    / \\ / \\",
-        "     o   o\n    /|>-<|\\\n    /|   |\\",
-        // They bow, then reset for a rematch.
-        "     o   o\n    /|\\ /|\\\n    / \\ / \\",
-        "     _   _\n     _o o_\n    /|   |\\",
-        "     o   o\n    /|\\ /|\\\n    / \\ / \\",
-        "    o     o\n   <|\\   /|>\n    |\\   /|",
-        "   o       o\n  /|\\     /|\\\n  / \\     / \\",
-        "  o         o\n <|\\       /|>\n  |\\       /|",
-        " o           o\n/|\\         /|\\\n/ \\         / \\",
-        " o           o\n/|>         <|\\\n/ \\         / \\",
+        "     .-.     .-.\n    (o>) /  (< x)\n   /|#|=    /|#|\\\n    |=|      |=|\n   /  /     /   \\",
+        "     .-.\n    (o>)    .-.\n   /|#|_----(<x)\n     |=\\    _|#|\\\n    _/      /__\\",
+        "     .-.\n    (o>)     .-.\n   /|#|_---. (<x)\n     |=\\     _|#|\\\n    _/       /__\\",
+        "    .-.      .-.\n   (o >)     (<x)\n   /|#|\\ <====|#|\\\n    |=|       |=|\n   /   \\      \\  \\",
+        "   .-.      .-.\n  (< o)     (<x)\n  /|#|\\ <---_|#|\\\n  \\=|       /=|\n   \\ \\        \\_",
+        "            .-.\n    .-. <---(<x)\n   (o>)     _|#|\\\n  /|#|_     /=|\n   /__\\       \\_",
+        "              .-.\n    .-.   +  (< x)\n   (o>)      /|#|\\\n  /|#|_       |=|\n   /__\\      /   \\",
+        "    .-.      .-.\n   (o >)    (< x)\n   /|#|-    -|#|\\\n    |=|      |=|\n    / /      \\ \\",
+        // Both rush in and lose their blades.
+        "     .-.    .-.\n    (o>)    (<x)\n   /|#|====-=|#|\\\n    |=|      |=|\n   /  /      \\  \\",
+        "      .-.  .-.\n     (o>)  (<x)\n    /|#|==*=|#|\\\n     |=|    |=|\n    /  /    \\  \\",
+        "      .-.  .-.\n     (o>)\\/(<x)\n    /|#|_+*_|#|\\\n      |=\\  /=|\n     _/      \\_",
+        "    .-. /  \\ .-.\n   (< o)    (x >)\n   /|#|\\    /|#|\\\n   \\=|        |=/\n    \\ \\      / /",
+        "   .-.        .-.\n  (< o) '  ` (x >)\n  /|#|\\      /|#|\\\n  \\=|          |=/\n   \\ \\        / /",
+        "   .-.        .-.\n  (o >)      (< x)\n  /|#|\\      /|#|\\\n   |=|  \\  /  |=|\n  /  \\        /  \\",
+        "   .-.        .-.\n  (o >)      (< x)\n  /|#|\\      /|#|\\\n   |=|        |=|\n  /  \\  -  -  /  \\",
+        "    .-.      .-.\n   (o >)    (< x)\n   /|#|\\    /|#|\\\n    |=|      |=|\n   /  \\ -  - /  \\",
+        // They lower their guard and shake hands.
+        "    .-.\n   (o >)    .-.\n   /|#|\\    (<x)\n    |=|     _|#|\\\n   /  \\ -  -/__\\",
+        "             .-.\n     .-.    (< x)\n    (o>)    /|#|\\\n   /|#|_     |=|\n    /__\\-  - /  \\",
+        "    .-.      .-.\n   (o >)    (< x)\n   /|#|\\ .  /|#|\\\n    |=|      |=|\n   /  \\ -  - /  \\",
+        "    .-.      .-.\n   (o >)    (< x)\n   /|#|\\  ~ -|#|\\\n    |=|      |=|\n   /  \\      /  \\",
+        "    .-.      .-.\n   (o >)    (< x)\n   /|#|- -- -|#|\\\n    |=|      |=|\n   /  \\      /  \\",
+        "     .-.    .-.\n    (o >)  (< x)\n    /|#|-==-|#|\\\n     |=|    |=|\n    /  \\    /  \\",
+        "     .-.    .-.\n    (o >) +(< x)\n    /|#|----|#|\\\n     |=|    |=|\n    /  \\    /  \\",
+        "     .-.    .-.\n    (o >)  (< x)\n    /|#|\\  /|#|\\\n     |=|    |=|\n    /  \\    /  \\",
+        // They bow and reset for a rematch.
+        "            .-.\n      .-.  (< x)\n     /o>)  /|#|\\\n    /|#|    |=|\n     / \\    /  \\",
+        "\n      .-.  .-.\n     /o>)  (<x\\\n    /|#|    |#|\\\n     / \\    / \\",
+        "     .-.\n    (o >)  .-.\n    /|#|\\  (<x\\\n     |=|    |#|\\\n    /  \\    / \\",
+        "     .-.  * .-.\n    (o >)  (< x)\n    /|#|\\  /|#|\\\n     |=|    |=|\n    /  \\    /  \\",
+        "    .-.      .-.\n   (o >)    (< x)\n   /|#|-    /|#|\\\n    |=|      |=|\n    / /     /   \\",
+        "   .-.        .-.\n  (o >)      (< x)\n  /|#|\\      -|#|\\\n   |=|        |=|\n  /   \\       \\ \\",
+        "  .-.          .-.\n (o >)        (< x)\n /|#|-        -|#|\\\n  |=|          |=|\n  / /          \\ \\",
+        " .-.            .-.\n(o >)          (< x)\n/|#|\\          -|#|\\\n |=|            |=|\n/   \\           \\ \\",
     ]
     let startButton = NSButton(title: "Start", target: nil, action: nil)
     let pauseButton = NSButton(title: "Pause", target: nil, action: nil)
@@ -325,6 +325,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
     private func showPlayingAnimation() {
         if playAnimationTimer == nil {
             detail.font = storyFont
+            detail.maximumNumberOfLines = 5
             detail.setAccessibilityLabel("Autoplay in progress")
             playAnimationStartedAt = ProcessInfo.processInfo.systemUptime
             playAnimationTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -353,6 +354,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
         playAnimationTimer?.invalidate()
         playAnimationTimer = nil
         detail.font = detailFont
+        detail.maximumNumberOfLines = 3
         detail.setAccessibilityLabel(nil)
         detail.stringValue = text
     }
