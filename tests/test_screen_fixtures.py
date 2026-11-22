@@ -11,6 +11,19 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class ScreenFixtures(unittest.TestCase):
+    def test_gray_board_ignores_hue_noise_but_detects_blocks(self):
+        cells = np.resize(np.array([(100, 16, 33), (120, 15, 34), (0, 0, 32)]), (8, 8, 3))
+        cells[2, 3] = (120, 15, 100)
+        cells[6, 5] = (30, 180, 34)
+        hsv = cells.repeat(40, axis=0).repeat(40, axis=1).astype(np.uint8)
+        frame = cv.cvtColor(hsv, cv.COLOR_HSV2BGR)
+        expected = np.zeros((8, 8), dtype=np.int8)
+        expected[2, 3] = expected[6, 5] = 1
+
+        board, _ = parse_board(frame, board_rect=(0, 0, 1, 1))
+
+        np.testing.assert_array_equal(board, expected)
+
     def test_orange_board_with_colored_edges_keeps_empty_cells(self):
         rows = [
             "###...##", "..##..##", "....####", "..#.####",

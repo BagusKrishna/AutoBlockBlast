@@ -225,9 +225,22 @@ def _shape_from_centroids(pts: list[tuple[float, float]]) -> np.ndarray:
     return _trim_piece(grid)
 
 
-def _matches_background(pixels: np.ndarray, background: np.ndarray) -> np.ndarray:
+def _board_color_distance(pixels: np.ndarray, background: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     hue, saturation, value = np.abs(pixels - background).T
-    return (np.minimum(hue, 180 - hue) <= 12) & (saturation <= 35) & (value <= 40)
+    hue = np.minimum(hue, 180 - hue)
+    # HSV hue can swing sharply when RGB channels differ by only a few levels.
+    min_chroma = 8 * 255
+    if background[1] * background[2] < min_chroma:
+        hue.fill(0)
+    else:
+        chroma = np.multiply(pixels[:, 1], pixels[:, 2], dtype=np.float32)
+        hue[chroma < min_chroma] = 0
+    return hue, saturation, value
+
+
+def _matches_background(pixels: np.ndarray, background: np.ndarray) -> np.ndarray:
+    hue, saturation, value = _board_color_distance(pixels, background)
+    return (hue <= 12) & (saturation <= 35) & (value <= 40)
 
 
 def _board_background(crop_hsv: np.ndarray, samples: np.ndarray) -> np.ndarray | None:
@@ -279,8 +292,8 @@ def parse_board(frame: np.ndarray, board_rect: config.Rect | None = None) -> tup
             (value >= config.CELL_V_MIN - 25) & (saturation >= config.CELL_S_MIN)
         )
     else:
-        hue, saturation, value = np.abs(samples - background).T
-        occupied = (np.minimum(hue, 180 - hue) > 8) | (saturation > 25) | (value > 25)
+        hue, saturation, value = _board_color_distance(samples, background)
+        occupied = (hue > 8) | (saturation > 25) | (value > 25)
     board = occupied.reshape(n, n).astype(np.int8)
     return board, crop
 
