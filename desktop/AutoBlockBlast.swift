@@ -105,15 +105,15 @@ final class BotApp: NSObject, NSApplicationDelegate {
     var sessionTimer: Timer?
     var sessionStartedAt: TimeInterval?
     var elapsedSessionTime: TimeInterval = 0
-    private var playCommentTimer: Timer?
-    private var playCommentStartedAt: TimeInterval = 0
-    private let playComments = [
-        "Ahh, easy one.",
-        "Lemme place this one.",
-        "Yep, that fits.",
-        "That spot will do.",
-        "One block at a time.",
-        "Nice, room for the next one."
+    private var playAnimationTimer: Timer?
+    private var playAnimationStartedAt: TimeInterval = 0
+    private let detailFont = NSFont.systemFont(ofSize: 14)
+    private let stickmanFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+    private let walkingFrames = [
+        " o\n/|\\\n/ \\",
+        "  o\n /|>\n /|",
+        "   o\n  \\|/\n  / \\",
+        "    o\n   <|\\\n    |\\",
     ]
     let startButton = NSButton(title: "Start", target: nil, action: nil)
     let pauseButton = NSButton(title: "Pause", target: nil, action: nil)
@@ -186,10 +186,9 @@ final class BotApp: NSObject, NSApplicationDelegate {
         metrics.spacing = 16
 
         status.font = .systemFont(ofSize: 15, weight: .bold)
-        detail.font = .systemFont(ofSize: 14)
+        detail.font = detailFont
         detail.textColor = .secondaryLabelColor
         detail.maximumNumberOfLines = 3
-        detail.wantsLayer = true
         sessionLine.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         sessionLine.textColor = .secondaryLabelColor
         sessionLine.isHidden = true
@@ -200,7 +199,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
         statusIcon.isHidden = true
         let statusLine = NSStackView(views: [statusIcon, status])
         statusLine.spacing = 8
-        sessionLine.alignment = .right
+        sessionLine.alignment = .left
         sessionLine.lineBreakMode = .byTruncatingTail
         statusLine.alignment = .centerY
 
@@ -273,40 +272,28 @@ final class BotApp: NSObject, NSApplicationDelegate {
         return Int(elapsedSessionTime + activeTime)
     }
 
-    private func showPlayComment() {
-        if playCommentTimer == nil && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            let fade = CABasicAnimation(keyPath: "opacity")
-            fade.fromValue = 1.0
-            fade.toValue = 0.62
-            fade.duration = 1.35
-            fade.autoreverses = true
-            fade.repeatCount = .infinity
-            fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            detail.layer?.add(fade, forKey: "playCommentFade")
-        }
-        if playCommentTimer == nil {
-            playCommentStartedAt = ProcessInfo.processInfo.systemUptime
-            playCommentTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-                self?.updatePlayComment()
+    private func showPlayingAnimation() {
+        if playAnimationTimer == nil {
+            detail.font = stickmanFont
+            detail.setAccessibilityLabel("Autoplay in progress")
+            playAnimationStartedAt = ProcessInfo.processInfo.systemUptime
+            playAnimationTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+                self?.updatePlayingAnimation()
             }
         }
-        updatePlayComment()
+        updatePlayingAnimation()
     }
 
-    private func updatePlayComment() {
-        let elapsed = ProcessInfo.processInfo.systemUptime - playCommentStartedAt
+    private func updatePlayingAnimation() {
+        let elapsed = ProcessInfo.processInfo.systemUptime - playAnimationStartedAt
         let text: String
-        if elapsed < 2 {
-            text = ". . ."
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            text = walkingFrames[0]
+        } else if elapsed < 2 {
+            let dots = min(3, Int(elapsed / 0.5) + 1)
+            text = String(repeating: ". ", count: dots - 1) + "."
         } else {
-            let commentTime = elapsed - 2
-            let comment = playComments[(Int(commentTime) / 15) % playComments.count]
-            if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-                text = comment
-            } else {
-                let dots = Int(commentTime.truncatingRemainder(dividingBy: 15) / 0.45) % 4
-                text = String(comment.dropLast()) + String(repeating: " .", count: dots)
-            }
+            text = walkingFrames[Int((elapsed - 2) / 0.5) % walkingFrames.count]
         }
         if detail.stringValue != text {
             detail.stringValue = text
@@ -314,9 +301,10 @@ final class BotApp: NSObject, NSApplicationDelegate {
     }
 
     private func showDetail(_ text: String) {
-        playCommentTimer?.invalidate()
-        playCommentTimer = nil
-        detail.layer?.removeAnimation(forKey: "playCommentFade")
+        playAnimationTimer?.invalidate()
+        playAnimationTimer = nil
+        detail.font = detailFont
+        detail.setAccessibilityLabel(nil)
         detail.stringValue = text
     }
 
@@ -499,7 +487,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
                 if !paused && !stopping {
                     status.stringValue = line == "UI_STATUS Playing…" || moveCount > 0 ? "Playing" : "Starting…"
                     if line == "UI_STATUS Playing…" {
-                        showPlayComment()
+                        showPlayingAnimation()
                     } else {
                         showDetail(String(line.dropFirst("UI_STATUS ".count)))
                     }
@@ -513,7 +501,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
                     if paused {
                         showDetail("Finishing the current move.")
                     } else {
-                        showPlayComment()
+                        showPlayingAnimation()
                     }
                 }
             } else if line == "Paused." {
@@ -523,7 +511,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
             } else if line == "Resumed." {
                 sessionStartedAt = ProcessInfo.processInfo.systemUptime
                 status.stringValue = "Playing"
-                showPlayComment()
+                showPlayingAnimation()
             } else if line.hasPrefix("RuntimeError:") || line.hasPrefix("FileNotFoundError:") ||
                       line.hasPrefix("ConnectionError:") || line.hasPrefix("OSError:") ||
                       line.hasPrefix("PermissionError:") || line.hasPrefix("ModuleNotFoundError:") ||
