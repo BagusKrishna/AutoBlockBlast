@@ -71,12 +71,19 @@ def emit_metrics_frame(frame):
         print("UI_FRAME " + base64.b64encode(encoded).decode("ascii"), flush=True)
 
 
-def read_stable(device, stream, *, after=0.0, timeout=8.0, need_pieces=True, expected_key=None):
+def analyze_with_reference(frame, reference):
+    hint = getattr(reference, "board_background", None)
+    return analyze(frame, background_hint=hint) if hint is not None else analyze(frame)
+
+
+def read_stable(device, stream, *, after=0.0, timeout=8.0, need_pieces=True, expected_key=None,
+                reference=None, expected_board=None):
     deadline = time.monotonic() + timeout
     previous = None
     previous_at = 0.0
     seen_at = after
     saw_valid_state = False
+    saw_inverted_board = False
     check_stop()
     require_game(device)
     while time.monotonic() < deadline:
@@ -90,7 +97,13 @@ def read_stable(device, stream, *, after=0.0, timeout=8.0, need_pieces=True, exp
         seen_at = received_at
         require_game(device)
         emit_metrics_frame(frame)
-        state = analyze(frame)
+        state = analyze_with_reference(frame, reference)
+        if any(board is not None and np.array_equal(state.board == 0, board)
+               for board in (getattr(reference, "board", None), expected_board)):
+            saw_inverted_board = True
+            previous = None
+            time.sleep(0.04)
+            continue
         invalid_piece = any(p.size and (max(p.shape) > 5 or p.sum() > 9) for p in state.pieces)
         if invalid_piece or (need_pieces and not any(p.size for p in state.pieces)):
             # Refill and clear animations can temporarily resemble oversized pieces.
@@ -109,6 +122,8 @@ def read_stable(device, stream, *, after=0.0, timeout=8.0, need_pieces=True, exp
         time.sleep(0.04)
     if seen_at == after:
         reason = "No new video frames arrived from the phone."
+    elif saw_inverted_board:
+        reason = "The board colors appeared inverted. Keep Block Blast visible and resume once the board settles."
     elif not saw_valid_state:
         reason = "Video arrived, but the tray could not be read reliably."
     else:
@@ -128,12 +143,12 @@ def recheck_latest(device, stream, state, state_at):
         check_stop()
         frame, received_at = stream.snapshot(after=state_at)
         if frame is not None and state_at < received_at and time.monotonic() - received_at <= 0.25:
-            current = analyze(frame)
+            current = analyze_with_reference(frame, state)
             if state_key(current) == expected:
                 return (frame, current, received_at), True
             break
         time.sleep(0.01)
-    return read_stable(device, stream, after=state_at), False
+    return read_stable(device, stream, after=state_at, reference=state), False
 
 
 def wait_for_planned_state(device, stream, state, *, after, changed_key=None):
@@ -143,7 +158,7 @@ def wait_for_planned_state(device, stream, state, *, after, changed_key=None):
     while time.monotonic() < deadline:
         try:
             observed = read_stable(device, stream, after=after,
-                                   timeout=max(0.0, deadline - time.monotonic()))
+                                   timeout=max(0.0, deadline - time.monotonic()), reference=state)
         except StableReadTimeout:
             break
         key = state_key(observed[1])
@@ -170,7 +185,7 @@ def reuse_verified_frame(stream, verified):
         return None
     if same_board_and_tray(frame, latest):
         return latest, state, latest_at
-    current = analyze(latest)
+    current = analyze_with_reference(latest, state)
     if state_key(current) == state_key(state):
         return latest, current, latest_at
     return None
@@ -278,7 +293,7 @@ def wait_verified(device, stream, before, placement, *, after, before_frame=None
     while time.monotonic() < deadline:
         try:
             observed = read_stable(device, stream, after=cursor, timeout=max(0, deadline - time.monotonic()), need_pieces=False,
-                                   **read_options)
+                                   reference=before, expected_board=board, **read_options)
         except StableReadTimeout as exc:
             if failure is None:
                 failure = exc
@@ -344,6 +359,7 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
     stream = ScrcpyStream(device)
     played = 0
     verified = None
+    last_confirmed = None
     remaining_plan = None
     tray_pickups = {}
     all_clear_earned = False
@@ -373,7 +389,10 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
                     solver = mode
                     verified = remaining_plan = initial_plan = None
             started = time.monotonic()
-            planning_frame, state, state_at = verified if verified is not None else read_stable(device, stream)
+            planning_frame, state, state_at = verified if verified is not None else read_stable(
+                device, stream, reference=last_confirmed
+            )
+            last_confirmed = state
             ready = time.monotonic()
             if played == 0:
                 stage("Calculating the first move…")
@@ -415,7 +434,7 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
             if plan is None or not plan.placements or not plan.complete:
                 if not replanned:
                     stage("Checking the board and tray again…")
-                    latest = read_stable(device, stream, after=state_at, timeout=2.0)
+                    latest = read_stable(device, stream, after=state_at, timeout=2.0, reference=state)
                     if state_key(latest[1]) != state_key(state):
                         verified = latest
                         remaining_plan = initial_plan = None
@@ -433,7 +452,7 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
             elif quick_trial:
                 (frame, current, current_at), used_quick_frame = recheck_latest(device, stream, state, state_at)
             else:
-                frame, current, current_at = read_stable(device, stream, after=state_at)
+                frame, current, current_at = read_stable(device, stream, after=state_at, reference=state)
             planned_key = state_key(state)
             current_key = state_key(current)
             if current_key != planned_key:
@@ -525,6 +544,7 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
                 current.board, current.pieces[placement.piece_index], placement.row, placement.col
             )
             shifted = not np.array_equal(verified[1].board, expected)
+            last_confirmed = verified[1]
             if shifted:
                 actual = find_shifted_placement(current, verified[1], placement)
                 if actual is None:

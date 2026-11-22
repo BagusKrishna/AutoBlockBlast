@@ -15,6 +15,7 @@ class VisionResult:
     board_crop: np.ndarray
     piece_crops: list[np.ndarray]
     pickups: dict[int, tuple[float, float, float, float]] = field(default_factory=dict)
+    board_background: np.ndarray | None = None
 
 
 def _crop_rel(frame: np.ndarray, rect: config.Rect) -> np.ndarray:
@@ -284,6 +285,11 @@ def _board_background(crop_hsv: np.ndarray, samples: np.ndarray) -> np.ndarray |
 
 
 def parse_board(frame: np.ndarray, board_rect: config.Rect | None = None) -> tuple[np.ndarray, np.ndarray]:
+    board, crop, _ = _parse_board(frame, board_rect)
+    return board, crop
+
+
+def _parse_board(frame, board_rect, background_hint=None):
     rect = board_rect or config.BOARD_RECT
     crop = _crop_rel(frame, rect)
     n = config.GRID_SIZE
@@ -296,6 +302,15 @@ def parse_board(frame: np.ndarray, board_rect: config.Rect | None = None) -> tup
     xs = points[:, 1, None, None] + offsets[None, None, :]
     samples = np.median(hsv[ys, xs], axis=(1, 2))
     background = _board_background(hsv, samples)
+    if background_hint is not None:
+        matching = _matches_background(samples, background_hint)
+        if matching.any() and (background is None or not _matches_background(
+            background[None, :], background_hint
+        )[0]):
+            candidate = np.median(samples[matching], axis=0)
+            support = sum(_matches_background(side, candidate).mean() >= 0.15 for side in _board_edges(hsv))
+            if support >= 2:
+                background = candidate
     if background is None:
         _, saturation, value = samples.T
         occupied = (value >= config.CELL_V_MIN) | (
@@ -320,7 +335,8 @@ def parse_board(frame: np.ndarray, board_rect: config.Rect | None = None) -> tup
                     corrected = ((hue > 8) | (saturation > 25) | (value > 25)).reshape(n, n)
                     if not (corrected.all(axis=0).any() or corrected.all(axis=1).any()):
                         board = corrected.astype(np.int8)
-    return board, crop
+                        background = alternative
+    return board, crop, background
 
 
 def parse_piece_slot(slot_bgr: np.ndarray, *, core_x: tuple[int, int] | None = None) -> np.ndarray:
@@ -396,10 +412,12 @@ def analyze(
     frame: np.ndarray,
     board_rect: config.Rect | None = None,
     pieces_rect: config.Rect | None = None,
+    *,
+    background_hint: np.ndarray | None = None,
 ) -> VisionResult:
-    board, board_crop = parse_board(frame, board_rect)
+    board, board_crop, background = _parse_board(frame, board_rect, background_hint)
     pieces, _, piece_crops, pickups = _parse_tray(frame, pieces_rect or config.PIECES_RECT)
-    return VisionResult(board, pieces, board_crop, piece_crops, pickups)
+    return VisionResult(board, pieces, board_crop, piece_crops, pickups, background)
 
 
 def same_board_and_tray(first: np.ndarray, second: np.ndarray) -> bool:

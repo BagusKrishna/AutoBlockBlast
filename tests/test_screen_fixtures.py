@@ -11,6 +11,22 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class ScreenFixtures(unittest.TestCase):
+    def test_confirmed_background_outweighs_bright_border_when_still_visible(self):
+        rows = ["####.###", "####.###", "#.##.###", ".##..###",
+                "......##", "..#####.", "..####..", "#.######"]
+        expected = np.array([[cell == "#" for cell in row] for row in rows])
+        occupied = (30, 195, 160)
+        empty = np.array((5, 145, 110))
+        cells = np.where(expected[..., None], occupied, empty)
+        hsv = cells.repeat(40, axis=0).repeat(40, axis=1).astype(np.uint8)
+        hsv[:5] = hsv[-5:] = hsv[:, :5] = hsv[:, -5:] = occupied
+        hsv[5:185, :5] = hsv[-5:, 5:185] = empty
+        frame = cv.cvtColor(hsv, cv.COLOR_HSV2BGR)
+
+        result = analyze(frame, board_rect=(0, 0, 1, 1), background_hint=empty)
+
+        np.testing.assert_array_equal(result.board, expected)
+
     def test_inverted_board_can_have_no_apparently_full_lines(self):
         rows = ["####.###", "####.###", "#.##.###", ".##..###",
                 "......##", "..#####.", "..####..", "#.######"]

@@ -112,7 +112,7 @@ class VerifiedPlayTests(unittest.TestCase):
             result, fast = autoplay.recheck_latest(Mock(), stream, self.before, 10.0)
             self.assertIs(result, stable)
             self.assertFalse(fast)
-            autoplay.read_stable.assert_called_once_with(unittest.mock.ANY, stream, after=10.0)
+            autoplay.read_stable.assert_called_once_with(unittest.mock.ANY, stream, after=10.0, reference=self.before)
 
     def test_pre_drag_recovers_only_when_planned_board_and_tray_return(self):
         from autoblockblast import autoplay
@@ -320,6 +320,20 @@ class VerifiedPlayTests(unittest.TestCase):
                 read_stable(Mock(), stream, timeout=0.01)
         focus.assert_called_once()
         analyze.assert_not_called()
+
+    def test_repeated_inverse_of_expected_board_is_not_accepted(self):
+        frame = np.zeros((80, 36, 3), dtype=np.uint8)
+        inverse = SimpleNamespace(board=1 - self.expected, pieces=self.before.pieces)
+        settled = SimpleNamespace(board=self.expected, pieces=self.before.pieces)
+        stream = Mock(alive=True)
+        stream.snapshot.side_effect = [(frame, stamp) for stamp in (10.1, 10.3, 10.4, 10.6)]
+        with patch.multiple("autoblockblast.autoplay", require_game=Mock(), check_stop=Mock(),
+                            analyze=Mock(side_effect=[inverse, inverse, settled, settled])), patch(
+            "autoblockblast.autoplay.time.monotonic", return_value=10.8
+        ), patch("autoblockblast.autoplay.time.sleep"):
+            _, state, stamp = read_stable(Mock(), stream, reference=self.before, expected_board=self.expected)
+        self.assertIs(state, settled)
+        self.assertEqual(stamp, 10.6)
 
     def test_invalid_animation_frame_cannot_satisfy_stability(self):
         stream = Mock(alive=True)
