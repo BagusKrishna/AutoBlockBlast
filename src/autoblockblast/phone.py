@@ -20,10 +20,10 @@ def require_game(device):
 def get_device():
     devices = adb.device_list()
     if not devices:
-        print("No Android device found. Connect your phone via USB and enable USB debugging.")
+        print("No Android device found. Connect via USB or wireless debugging and check ADB authorization.")
         sys.exit(1)
     if len(devices) != 1:
-        raise RuntimeError("Connect only the intended Android phone before starting the bot.")
+        raise RuntimeError("More than one ADB connection found. Disconnect extra phones or one USB/Wi-Fi connection and restart.")
     device = devices[0]
     state = device.get_state()
     if state != "device":

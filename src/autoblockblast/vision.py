@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import cv2 as cv
 import numpy as np
@@ -12,6 +12,7 @@ class VisionResult:
     pieces: list[np.ndarray]
     board_crop: np.ndarray
     piece_crops: list[np.ndarray]
+    pickups: dict[int, tuple[float, float, float, float]] = field(default_factory=dict)
 
 
 def _crop_rel(frame: np.ndarray, rect: config.Rect) -> np.ndarray:
@@ -272,9 +273,13 @@ def pickup_geometry(frame: np.ndarray, piece_index: int, piece: np.ndarray):
     points = _cell_centers_from_mask(mask, _slot_core(tray.shape[1], piece_index, x1))
     if not np.array_equal(_shape_from_centroids(points), piece):
         raise RuntimeError("Piece changed before pickup; no drag sent.")
-    y, x = min(points, key=lambda point: (point[0], point[1]))
     ox = int(frame.shape[1] * config.PIECES_RECT[0]) + x1
     oy = int(frame.shape[0] * config.PIECES_RECT[1])
+    return _geometry_from_points(points, ox, oy)
+
+
+def _geometry_from_points(points, ox, oy):
+    y, x = min(points)
     center_x = (min(p[1] for p in points) + max(p[1] for p in points)) / 2
     center_y = (min(p[0] for p in points) + max(p[0] for p in points)) / 2
     return ox + x, oy + y, ox + center_x, oy + center_y
@@ -294,16 +299,26 @@ def _slot_x_ranges(tray_w: int) -> list[tuple[int, int]]:
 def parse_pieces(
     frame: np.ndarray, pieces_rect: config.Rect | None = None
 ) -> tuple[list[np.ndarray], np.ndarray, list[np.ndarray]]:
-    rect = pieces_rect or config.PIECES_RECT
+    pieces, crop, piece_crops, _ = _parse_tray(frame, pieces_rect or config.PIECES_RECT)
+    return pieces, crop, piece_crops
+
+
+def _parse_tray(frame: np.ndarray, rect: config.Rect):
     crop = _crop_rel(frame, rect)
-    h, w = crop.shape[:2]
+    w = crop.shape[1]
+    origin_x, origin_y = int(frame.shape[1] * rect[0]), int(frame.shape[0] * rect[1])
+    pickups = {}
     pieces = []
     piece_crops = []
     for i, (x1, x2) in enumerate(_slot_x_ranges(w)):
         slot = crop[:, x1:x2]
         piece_crops.append(slot)
-        pieces.append(parse_piece_slot(slot, core_x=_slot_core(w, i, x1)))
-    return pieces, crop, piece_crops
+        mask = piece_mask(cv.cvtColor(slot, cv.COLOR_BGR2HSV))
+        points = _cell_centers_from_mask(mask, _slot_core(w, i, x1))
+        pieces.append(_shape_from_centroids(points))
+        if points:
+            pickups[i] = _geometry_from_points(points, origin_x + x1, origin_y)
+    return pieces, crop, piece_crops, pickups
 
 
 def analyze(
@@ -312,8 +327,15 @@ def analyze(
     pieces_rect: config.Rect | None = None,
 ) -> VisionResult:
     board, board_crop = parse_board(frame, board_rect)
-    pieces, _, piece_crops = parse_pieces(frame, pieces_rect)
-    return VisionResult(board, pieces, board_crop, piece_crops)
+    pieces, _, piece_crops, pickups = _parse_tray(frame, pieces_rect or config.PIECES_RECT)
+    return VisionResult(board, pieces, board_crop, piece_crops, pickups)
+
+
+def same_board_and_tray(first: np.ndarray, second: np.ndarray) -> bool:
+    return first.shape == second.shape and all(
+        np.array_equal(_crop_rel(first, rect), _crop_rel(second, rect))
+        for rect in (config.BOARD_RECT, config.PIECES_RECT)
+    )
 
 
 def _draw_rect(frame: np.ndarray, rect: config.Rect, color: tuple[int, int, int]):

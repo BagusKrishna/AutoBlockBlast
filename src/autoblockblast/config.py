@@ -23,7 +23,7 @@ PIECE_H_DELTA = 17
 PIECE_MIN_AREA = 60
 PIECE_OPEN = 4
 
-DRAG_MS = 600
+DRAG_MS = 150
 SETTLE_S = 0.35
 ROUND_PAUSE_S = 0.35
 # Measured on this Samsung/game build: block motion = 1.5 * finger motion,

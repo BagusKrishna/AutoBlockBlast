@@ -72,13 +72,15 @@ class Controller:
         ms = config.DRAG_MS if duration_ms is None else duration_ms
         self.device.shell(f"input swipe {x1} {y1} {x2} {y2} {ms}")
 
-    def drag_piece(self, piece_index: int, piece: np.ndarray, place: Placement, frame_shape, frame=None, *, duration_ms=None, settle=True) -> float:
+    def drag_piece(self, piece_index: int, piece: np.ndarray, place: Placement, frame_shape, frame=None, *, duration_ms=None, settle=True, pickup=None) -> float:
         self.set_frame_size(frame_shape[1], frame_shape[0])
         sx, sy = piece_slot_center(frame_shape, piece_index)
         center_x, center_y = sx, sy
         ph, pw = piece.shape
         dx, dy = board_cell_xy(frame_shape, place.row + (ph - 1) / 2, place.col + (pw - 1) / 2)
-        if frame is not None:
+        if pickup is not None:
+            sx, sy, center_x, center_y = pickup
+        elif frame is not None:
             sx, sy, center_x, center_y = pickup_geometry(frame, piece_index, piece)
         cell_h = (frame_shape[0] * (config.BOARD_RECT[3] - config.BOARD_RECT[1]) * (1 - 2 * config.BOARD_INSET)) / config.GRID_SIZE
         if config.DRAG_GAIN_X <= 0 or config.DRAG_GAIN_Y <= 0:

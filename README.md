@@ -62,11 +62,17 @@ See the [Android wireless debugging guide](https://developer.android.com/tools/a
 
 ## Mac desktop app
 
+![AutoBlockBlast desktop app while playing](docs/media/desktop-preview.png)
+
+The screenshot shows an earlier build with the Last combo label. The current app shows Highest combo.
+
 Build the app once from the project folder with `desktop/build-app.sh`. This requires Apple's Swift compiler and the Python environment from setup. Double-click `AutoBlockBlast.app` in the project folder to open it.
 
-Connect the phone, open Block Blast and click **Start**. **Pause** finishes the current move and waits, then **Resume** continues after checking the game state. **Stop** ends the session after the current move. The app reads the current score and last visible combo from the game screen when text recognition succeeds. It also displays verified moves and any stopping reason.
+Connect the phone, open Block Blast and click **Start**. **Pause** finishes the current move and waits, then **Resume** continues after checking the game state. **Stop** ends the session after the current move. The app reads the current score and tracks the highest combo recognized during the current autoplay session. A lower reading leaves that record in place. Starting a new session resets the displayed combo record. The app also shows verified moves and any stopping reason.
 
 ## Run in Terminal
+
+The default swipe duration is 150 ms, verified on the Galaxy A72 over USB. If a swipe leaves the board and tray unchanged, autoplay confirms that state on fresh frames and retries the same placement once at 250 ms. Use `--drag-ms` during a bounded run to test a different duration.
 
 ```bash
 # Read the board and print a plan without touching the phone
@@ -78,13 +84,29 @@ Connect the phone, open Block Blast and click **Start**. **Pause** finishes the 
 # Play at most three moves
 .venv/bin/python -m autoblockblast.autoplay --execute --moves 3
 
-# Compare a faster swipe using a bounded run
+# Audit plan consistency and alternate pre-drag checks by tray
+.venv/bin/python -m autoblockblast.autoplay --execute --moves 100 --audit --compare-recheck --timing
+
+# Use the faster pre-drag check and reuse the remaining exact plan
+.venv/bin/python -m autoblockblast.autoplay --execute --moves 3 --fast-recheck --reuse-plan
+
+# Test a different swipe duration using a bounded run
 .venv/bin/python -m autoblockblast.autoplay --execute --moves 3 --drag-ms 500 --timing
+
+# Test reuse of verified frames and pickup coordinates inside a planned tray
+.venv/bin/python -m autoblockblast.autoplay --execute --moves 18 --drag-ms 500 --fast-recheck --reuse-plan --chain-tray --timing
+
+# Test earlier verification of clears before the tray refills
+.venv/bin/python -m autoblockblast.autoplay --execute --moves 18 --drag-ms 500 --fast-recheck --early-clear --audit --timing
 ```
 
 On macOS the `scripts/` folder also contains launchers for preview, start and stop. An in-progress drag can finish before stop takes effect. The phone screen must remain unlocked and Block Blast must remain in front.
 
 The most recent failed verification is stored locally in `captures/last-failure/`. Its JSON report records the intended move and the predicted and observed state. Raw game frames are stored when available. Restarting the bot keeps the report until a later verification failure replaces it. Preview saves a board overlay. Pass `--debug` to also save successful before/after frames. The capture directory is gitignored.
+
+Audit results are appended locally to `captures/audit.jsonl`, which is ignored by Git. Each session records move coordinates, timings, and whether the original plan matched later calculations. Audit mode recalculates after every placement for comparison.
+
+The Mac app uses the faster pre-drag check and reuses the remaining exact plan after each verified move. The faster pre-drag check confirms that a fresh video frame matches the previously stabilized board and tray. If the frame differs or fails to arrive promptly, it falls back to the full stable read. The bot verifies every placement against the predicted board and tray before reusing the rest of a plan. Resuming after a pause starts with a fresh board read and calculation. The app uses `--chain-tray` to reuse the recent verified frame for the next move within a tray. If a newer frame is available, the bot checks it immediately and falls back to the regular pre-drag check if the decoded board or tray differs. It reuses pickup coordinates when they match the last state and takes updated coordinates from the existing frame read if the piece shifted. The foreground and post-drag checks still run. In chained play, two fresh frames that match the full predicted board and remaining tray can confirm a clear without a minimum time gap between the frames. The app can continue while an effect is still visible if the board and tray match. Tray refills still use the full stability check. If a pre-drag read differs, the bot gives the original board and tray up to two seconds to reappear before stopping.
 
 Use `--solver beam` to compare the original ranking or `--solver beam-all-clear` to compare width-40 beam search using the new ranking.
 
