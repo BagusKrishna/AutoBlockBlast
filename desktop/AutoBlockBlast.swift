@@ -190,7 +190,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
         detail.textColor = .secondaryLabelColor
         detail.maximumNumberOfLines = 3
         detail.wantsLayer = true
-        sessionLine.font = .monospacedDigitSystemFont(ofSize: 13, weight: .regular)
+        sessionLine.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         sessionLine.textColor = .secondaryLabelColor
         sessionLine.isHidden = true
         statusIcon.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Warning")
@@ -200,7 +200,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
         statusIcon.isHidden = true
         let statusLine = NSStackView(views: [statusIcon, status])
         statusLine.spacing = 8
-        sessionLine.alignment = .left
+        sessionLine.alignment = .right
         sessionLine.lineBreakMode = .byTruncatingTail
         statusLine.alignment = .centerY
 
@@ -324,9 +324,10 @@ final class BotApp: NSObject, NSApplicationDelegate {
         sessionLine.isHidden = status.stringValue != "Playing"
         guard !sessionLine.isHidden else { return }
         let seconds = playedSeconds
+        let minutesAndSeconds = "\((seconds / 60) % 60)m \(seconds % 60)s"
         let time = seconds >= 3600
-            ? String(format: "%d:%02d:%02d", seconds / 3600, (seconds / 60) % 60, seconds % 60)
-            : String(format: "%02d:%02d", seconds / 60, seconds % 60)
+            ? "\(seconds / 3600)h \(minutesAndSeconds)"
+            : minutesAndSeconds
         sessionLine.stringValue = "Running for \(time) · \(moveCount) \(moveCount == 1 ? "move" : "moves")"
     }
 

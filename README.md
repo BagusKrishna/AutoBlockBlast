@@ -64,7 +64,7 @@ See the [Android wireless debugging guide](https://developer.android.com/tools/a
 
 ![AutoBlockBlast desktop app while playing](docs/media/desktop-preview.png)
 
-The screenshot shows an earlier build with the Last combo label. The current app shows Highest combo.
+The screenshot is from an earlier build. The current app shows **Highest combo** and a smaller, right-aligned session line such as `Running for 1m 23s · 99 moves` while playing.
 
 Build the app once from the project folder with `desktop/build-app.sh`. This requires Apple's Swift compiler and the Python environment from setup. Double-click `AutoBlockBlast.app` in the project folder to open it.
 
