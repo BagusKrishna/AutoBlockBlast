@@ -53,6 +53,21 @@ class ScreenFixtures(unittest.TestCase):
 
         np.testing.assert_array_equal(actual, board)
 
+    def test_green_board_uses_agreement_across_edges_over_bright_blocks(self):
+        expected = np.zeros((8, 8), dtype=np.int8)
+        expected.ravel()[:41] = 1
+        cells = np.where(expected[..., None], (1, 159, 250), (66, 182, 56))
+        hsv = cells.repeat(40, axis=0).repeat(40, axis=1).astype(np.uint8)
+        hsv[:5] = (4, 165, 224)
+        hsv[-5:] = (59, 193, 89)
+        hsv[:, :5] = (65, 172, 96)
+        hsv[:, -5:] = (2, 172, 199)
+
+        frame = cv.cvtColor(hsv, cv.COLOR_HSV2BGR)
+        board, _ = parse_board(frame, board_rect=(0, 0, 1, 1))
+
+        np.testing.assert_array_equal(board, expected)
+
     def test_long_bar_does_not_bleed_into_empty_middle_slot(self):
         for x, slot in ((31, 0), (238, 2)):
             with self.subTest(slot=slot):

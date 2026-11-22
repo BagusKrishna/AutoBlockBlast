@@ -267,18 +267,15 @@ def _board_background(crop_hsv: np.ndarray, samples: np.ndarray) -> np.ndarray |
         return np.median(samples[matching], axis=0)
 
     # Blocks along different edges can make the pooled HSV median miss every cell.
-    best_match = None
-    best_support = 0
-    for strip in strips:
-        background = np.median(strip, axis=0)
-        matching = _matches_background(samples, background)
-        if matching.any():
-            support = np.count_nonzero(_matches_background(edge, background))
-            if support > best_support:
-                best_match = matching
-                best_support = support
-    if best_match is None:
+    side_matches = [_matches_background(samples, np.median(strip, axis=0)) for strip in strips]
+    supported = [matching for matching in side_matches if matching.any()]
+    if not supported:
         return None
+    # Filled cells can dominate a single side. Prefer agreement across sides.
+    best_match = max(supported, key=lambda match: (
+        sum(bool(np.any(match & other)) for other in supported),
+        -np.median(samples[match, 2]),
+    ))
     return np.median(samples[best_match], axis=0)
 
 
