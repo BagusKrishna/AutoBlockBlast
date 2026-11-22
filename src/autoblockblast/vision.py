@@ -305,18 +305,21 @@ def parse_board(frame: np.ndarray, board_rect: config.Rect | None = None) -> tup
         hue, saturation, value = _board_color_distance(samples, background)
         occupied = (hue > 8) | (saturation > 25) | (value > 25)
     board = occupied.reshape(n, n).astype(np.int8)
-    if background is not None and (board.all(axis=0).any() or board.all(axis=1).any()):
-        # A bright row of blocks can dominate the border and invert a settled board.
-        edge = np.vstack(_board_edges(hsv))
+    if background is not None and background[2] >= samples[:, 2].min() + 60:
+        # A bright group of blocks can dominate the pooled border color.
+        edges = _board_edges(hsv)
+        edge = np.vstack(edges)
         dark_edge = edge[edge[:, 2] <= np.percentile(edge[:, 2], 20)]
         matching = _matches_background(samples, np.median(dark_edge, axis=0))
         if matching.any():
             alternative = np.median(samples[matching], axis=0)
             if background[2] - alternative[2] >= 60:
-                hue, saturation, value = _board_color_distance(samples, alternative)
-                corrected = ((hue > 8) | (saturation > 25) | (value > 25)).reshape(n, n)
-                if not (corrected.all(axis=0).any() or corrected.all(axis=1).any()):
-                    board = corrected.astype(np.int8)
+                support = sum(_matches_background(side, alternative).mean() >= 0.15 for side in edges)
+                if support >= 2 or board.all(axis=0).any() or board.all(axis=1).any():
+                    hue, saturation, value = _board_color_distance(samples, alternative)
+                    corrected = ((hue > 8) | (saturation > 25) | (value > 25)).reshape(n, n)
+                    if not (corrected.all(axis=0).any() or corrected.all(axis=1).any()):
+                        board = corrected.astype(np.int8)
     return board, crop
 
 

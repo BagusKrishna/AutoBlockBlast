@@ -11,6 +11,20 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class ScreenFixtures(unittest.TestCase):
+    def test_inverted_board_can_have_no_apparently_full_lines(self):
+        rows = ["####.###", "####.###", "#.##.###", ".##..###",
+                "......##", "..#####.", "..####..", "#.######"]
+        expected = np.array([[cell == "#" for cell in row] for row in rows])
+        full, empty = (24, 193, 253), (10, 152, 69)
+        cells = np.where(expected[..., None], full, empty)
+        hsv = cells.repeat(40, axis=0).repeat(40, axis=1).astype(np.uint8)
+        hsv[:5] = hsv[-5:] = hsv[:, :5] = hsv[:, -5:] = full
+        hsv[5:185, :5] = hsv[-5:, 5:185] = empty
+
+        board, _ = parse_board(cv.cvtColor(hsv, cv.COLOR_HSV2BGR), board_rect=(0, 0, 1, 1))
+
+        np.testing.assert_array_equal(board, expected)
+
     def test_full_row_in_inverted_read_uses_dark_border_reference(self):
         rows = ["#.######", "###.####", "##..####", "...###..",
                 "#.######", "........", "##.#####", "###....#"]
