@@ -8,7 +8,7 @@ AutoBlockBlast runs on a Mac and plays **Block Blast on an Android phone connect
 | --- | --- |
 | <img src="docs/media/autoplay.gif" width="280" alt="Five autoplay moves on a Galaxy A72 with the live score visible"> | <img src="docs/media/desktop-preview.png" width="470" alt="Mac app showing the final score, highest combo, and jumping ASCII dino"> |
 
-The recording shows five verified placements and a score increase from **835,965** to **836,142**. The Mac preview shows the final score and the highest combo visible in the same run.
+The recording shows five verified placements and a score increase from **835,965** to **836,142**. The Mac preview shows the final score and highest combo from that run alongside the current solver picker.
 
 ## Tested setup
 
@@ -68,11 +68,11 @@ While playing, the app shows a jumping ASCII dino and a session timer next to th
 
 Build the app once from the project folder with `desktop/build-app.sh`. This requires Apple's Swift compiler and the Python environment from setup. Double-click `AutoBlockBlast.app` in the project folder to open it.
 
-Connect the phone, open Block Blast and click **Start**. **Pause** finishes the current move and waits, then **Resume** continues after checking the game state. **Stop** ends the session after the current move. The app reads the current score and tracks the highest combo recognized during the current autoplay session. A lower reading leaves that record in place. Starting a new session resets the displayed combo record. The app also shows verified moves and any stopping reason.
+Connect the phone, open Block Blast and click **Start**. **Pause** finishes the current move and waits, then **Resume** continues after checking the game state. When paused, choose **OneLine** for more clearing placements or **MultiLine** for clears that combine several lines in one placement. An interrupted session can resume with its elapsed time and move count preserved. **Stop** ends the session after the current move. The app reads the current score and tracks the highest combo recognized during the current autoplay session. A lower reading leaves that record in place. Starting a new session resets the displayed combo record. The app also shows verified moves and any stopping reason.
 
 ## Run in Terminal
 
-The default swipe duration is 150 ms. Swipes that travel horizontally across at least a third of the display use 250 ms to give the game more time to track the drag. If a swipe leaves the board and tray unchanged, autoplay confirms that state on fresh frames and retries the same placement once at 250 ms. Use `--drag-ms` during a bounded run to test a different duration.
+The default swipe duration is 150 ms. Swipes that travel horizontally across at least a third of the display use 250 ms to give the game more time to track the drag. If a swipe leaves the board and tray unchanged, autoplay confirms that state on fresh frames and retries the placement at 250 ms, then at 400 ms if the board and tray are still unchanged. Use `--drag-ms` during a bounded run to test a different duration.
 
 ```bash
 # Read the board and print a plan without touching the phone
