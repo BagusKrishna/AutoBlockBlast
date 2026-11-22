@@ -501,9 +501,26 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
                     retry_frame.shape, frame=retry_frame, duration_ms=retry_ms, settle=False,
                 )
                 retried = True
-                verified = wait_verified(device, stream, retry_state, placement, after=retry_release,
-                                         before_frame=retry_frame, before_at=retry_at, debug=debug,
-                                         recover_shifted=True)
+                try:
+                    verified = wait_verified(device, stream, retry_state, placement, after=retry_release,
+                                             before_frame=retry_frame, before_at=retry_at, debug=debug,
+                                             recover_shifted=True)
+                except SwipeDidNotLand as retry_failure:
+                    stage("Swipe did not land. Checking again before a slower retry…")
+                    retry_frame, retry_state, retry_at = wait_for_planned_state(
+                        device, stream, current, after=retry_failure.received_at
+                    )
+                    if wait_if_paused():
+                        verified = remaining_plan = initial_plan = None
+                        continue
+                    check_stop()
+                    retry_release = controller.drag_piece(
+                        placement.piece_index, retry_state.pieces[placement.piece_index], placement,
+                        retry_frame.shape, frame=retry_frame, duration_ms=400, settle=False,
+                    )
+                    verified = wait_verified(device, stream, retry_state, placement, after=retry_release,
+                                             before_frame=retry_frame, before_at=retry_at, debug=debug,
+                                             recover_shifted=True)
             expected, cleared = apply_move(
                 current.board, current.pieces[placement.piece_index], placement.row, placement.col
             )

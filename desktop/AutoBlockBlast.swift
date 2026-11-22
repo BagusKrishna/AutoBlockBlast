@@ -131,6 +131,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
     var stopping = false
     var hasStarted = false
     var paused = false
+    var interrupted = false
     var lastMessage = ""
     var pendingOutput = ""
     var moveCount = 0
@@ -321,7 +322,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
     }
 
     private func updateSessionLine() {
-        sessionLine.isHidden = status.stringValue != "Playing"
+        sessionLine.isHidden = status.stringValue != "Playing" && status.stringValue != "Paused"
         guard !sessionLine.isHidden else { return }
         let seconds = playedSeconds
         let minutesAndSeconds = "\((seconds / 60) % 60)m \(seconds % 60)s"
@@ -341,12 +342,12 @@ final class BotApp: NSObject, NSApplicationDelegate {
 
     func refreshButtons() {
         updateSessionLine()
-        startButton.isEnabled = process == nil
+        startButton.isEnabled = process == nil && !interrupted
         startButton.title = needsFolderAccess ? "Allow folder access…" : (hasStarted && process == nil ? "Restart" : "Start")
         startButton.keyEquivalent = startButton.title == "Restart" ? "\r" : ""
-        pauseButton.isEnabled = process != nil && !stopping
-        stopButton.isEnabled = process != nil && !stopping
-        pauseButton.title = paused ? "Resume" : "Pause"
+        pauseButton.isEnabled = (process != nil || interrupted) && !stopping
+        stopButton.isEnabled = (process != nil || interrupted) && !stopping
+        pauseButton.title = (paused || interrupted) ? "Resume" : "Pause"
         solverMenu.isEnabled = process == nil || (paused && status.stringValue == "Paused")
     }
 
@@ -393,6 +394,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
 
     @objc func start() {
         guard process == nil else { return }
+        let continuing = interrupted
         if needsFolderAccess {
             let panel = NSOpenPanel()
             panel.message = "Select the AutoBlockBlast project folder to allow the app to read the bot and its environment."
@@ -449,12 +451,14 @@ final class BotApp: NSObject, NSApplicationDelegate {
                     self.needsFolderAccess = self.lastMessage.contains("PermissionError:") &&
                         self.lastMessage.contains("Operation not permitted")
                     if self.stopping {
+                        self.interrupted = false
                         self.status.stringValue = "Stopped"
                         self.showDetail("Stopped by you.")
                     } else {
                         let gameHidden = self.lastMessage.lowercased().contains("not in front")
+                        self.interrupted = !self.needsFolderAccess && !self.lastMessage.contains("No complete plan")
                         self.statusIcon.isHidden = !gameHidden && finished.terminationStatus == 0 && self.lastMessage.isEmpty
-                        self.status.stringValue = gameHidden ? "Game not in front" :
+                        self.status.stringValue = self.interrupted ? "Paused" : gameHidden ? "Game not in front" :
                             (finished.terminationStatus == 0 ? "Stopped" : "Stopped with an error")
                         self.showDetail(self.needsFolderAccess
                             ? "macOS blocked access to the project folder. Click Allow folder access and select the AutoBlockBlast folder."
@@ -466,15 +470,18 @@ final class BotApp: NSObject, NSApplicationDelegate {
             }
             lastMessage = ""
             pendingOutput = ""
-            moveCount = 0
-            scoreText = "—"
-            highestCombo = nil
+            if !continuing {
+                moveCount = 0
+                scoreText = "—"
+                highestCombo = nil
+                elapsedSessionTime = 0
+            }
             metricsGeneration += 1
             updateStats()
             try task.run()
             hasStarted = true
             process = task
-            elapsedSessionTime = 0
+            interrupted = false
             sessionStartedAt = ProcessInfo.processInfo.systemUptime
             updateSessionLine()
             status.stringValue = "Starting…"
@@ -617,6 +624,10 @@ final class BotApp: NSObject, NSApplicationDelegate {
     }
 
     @objc func togglePause() {
+        if interrupted && process == nil {
+            start()
+            return
+        }
         guard process != nil, !stopping else { return }
         do {
             if paused {
@@ -640,6 +651,13 @@ final class BotApp: NSObject, NSApplicationDelegate {
     }
 
     @objc func stop() {
+        if interrupted && process == nil {
+            interrupted = false
+            status.stringValue = "Stopped"
+            showDetail("Stopped by you.")
+            refreshButtons()
+            return
+        }
         guard process != nil, !stopping else { return }
         do {
             try Data().write(to: stopFile)
