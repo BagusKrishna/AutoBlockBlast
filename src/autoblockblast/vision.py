@@ -5,6 +5,8 @@ import numpy as np
 
 from autoblockblast import config
 
+_MIN_HSV_CHROMA = 8 * 255
+
 
 @dataclass
 class VisionResult:
@@ -13,6 +15,7 @@ class VisionResult:
     board_crop: np.ndarray
     piece_crops: list[np.ndarray]
     pickups: dict[int, tuple[float, float, float, float]] = field(default_factory=dict)
+    board_background: np.ndarray | None = None
 
 
 def _crop_rel(frame: np.ndarray, rect: config.Rect) -> np.ndarray:
@@ -45,7 +48,15 @@ def piece_mask(hsv: np.ndarray) -> np.ndarray:
     dh = _hue_dist(H, bg_h)
     ds = np.abs(S.astype(np.int16) - int(bg_s))
     dv = np.abs(V.astype(np.int16) - int(bg_v))
-    block = (dv >= config.PIECE_V_DELTA) | (ds >= config.PIECE_S_DELTA) | ((dh >= config.PIECE_H_DELTA) & (S >= 15))
+    block = dv >= config.PIECE_V_DELTA
+    if bg_s * bg_v < _MIN_HSV_CHROMA:
+        # Gray backgrounds can have saturated-looking noise in dark pixels.
+        if bg_v <= 12 and V.max() < config.PIECE_V_DELTA:
+            return np.zeros_like(V)
+        chroma = np.multiply(S, V, dtype=np.int32)
+        block |= (ds >= config.PIECE_S_DELTA) & (V >= bg_v) & (chroma >= _MIN_HSV_CHROMA)
+    else:
+        block |= (ds >= config.PIECE_S_DELTA) | ((dh >= config.PIECE_H_DELTA) & (S >= 15))
     mask = block.astype(np.uint8)
     k = config.PIECE_OPEN
     if k > 1:
@@ -225,30 +236,60 @@ def _shape_from_centroids(pts: list[tuple[float, float]]) -> np.ndarray:
     return _trim_piece(grid)
 
 
-def _board_background(crop_hsv: np.ndarray, samples: np.ndarray) -> tuple[float, float, float]:
+def _board_color_distance(pixels: np.ndarray, background: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    hue, saturation, value = np.abs(pixels - background).T
+    hue = np.minimum(hue, 180 - hue)
+    # HSV hue can swing sharply when RGB channels differ by only a few levels.
+    if background[1] * background[2] < _MIN_HSV_CHROMA:
+        hue.fill(0)
+    else:
+        chroma = np.multiply(pixels[:, 1], pixels[:, 2], dtype=np.float32)
+        hue[chroma < _MIN_HSV_CHROMA] = 0
+    return hue, saturation, value
+
+
+def _matches_background(pixels: np.ndarray, background: np.ndarray) -> np.ndarray:
+    hue, saturation, value = _board_color_distance(pixels, background)
+    return (hue <= 12) & (saturation <= 35) & (value <= 40)
+
+
+def _board_edges(crop_hsv: np.ndarray) -> list[np.ndarray]:
     gh, gw = crop_hsv.shape[:2]
     band = max(2, min(gh, gw) // 64)
-    strips = [
+    return [
         crop_hsv[:band, :].reshape(-1, 3),
         crop_hsv[-band:, :].reshape(-1, 3),
         crop_hsv[:, :band].reshape(-1, 3),
         crop_hsv[:, -band:].reshape(-1, 3),
     ]
-    edge = np.vstack(strips)
-    edge_bg = np.median(edge, axis=0)
 
-    dh = np.abs(samples[:, 0] - edge_bg[0])
-    circ_dh = np.minimum(dh, 180 - dh)
-    ds = np.abs(samples[:, 1] - edge_bg[1])
-    dv = np.abs(samples[:, 2] - edge_bg[2])
-    candidates = (circ_dh <= 12) & (ds <= 35) & (dv <= 40)
-    if candidates.any():
-        bg = np.median(samples[candidates], axis=0)
-        return float(bg[0]), float(bg[1]), float(bg[2])
-    return float(edge_bg[0]), float(edge_bg[1]), float(edge_bg[2])
+
+def _board_background(crop_hsv: np.ndarray, samples: np.ndarray) -> np.ndarray | None:
+    strips = _board_edges(crop_hsv)
+    edge = np.vstack(strips)
+    matching = _matches_background(samples, np.median(edge, axis=0))
+    if matching.any():
+        return np.median(samples[matching], axis=0)
+
+    # Blocks along different edges can make the pooled HSV median miss every cell.
+    side_matches = [_matches_background(samples, np.median(strip, axis=0)) for strip in strips]
+    supported = [matching for matching in side_matches if matching.any()]
+    if not supported:
+        return None
+    # Filled cells can dominate a single side. Prefer agreement across sides.
+    best_match = max(supported, key=lambda match: (
+        sum(bool(np.any(match & other)) for other in supported),
+        -np.median(samples[match, 2]),
+    ))
+    return np.median(samples[best_match], axis=0)
 
 
 def parse_board(frame: np.ndarray, board_rect: config.Rect | None = None) -> tuple[np.ndarray, np.ndarray]:
+    board, crop, _ = _parse_board(frame, board_rect)
+    return board, crop
+
+
+def _parse_board(frame, board_rect, background_hint=None):
     rect = board_rect or config.BOARD_RECT
     crop = _crop_rel(frame, rect)
     n = config.GRID_SIZE
@@ -260,14 +301,42 @@ def parse_board(frame: np.ndarray, board_rect: config.Rect | None = None) -> tup
     ys = points[:, 0, None, None] + offsets[None, :, None]
     xs = points[:, 1, None, None] + offsets[None, None, :]
     samples = np.median(hsv[ys, xs], axis=(1, 2))
-    bg_h, bg_s, bg_v = _board_background(hsv, samples)
-    delta_h = np.abs(samples[:, 0] - bg_h)
-    circ_dh = np.minimum(delta_h, 180 - delta_h)
-    delta_s = np.abs(samples[:, 1] - bg_s)
-    delta_v = np.abs(samples[:, 2] - bg_v)
-    occupied = (circ_dh > 8) | (delta_s > 25) | (delta_v > 25)
+    background = _board_background(hsv, samples)
+    if background_hint is not None:
+        matching = _matches_background(samples, background_hint)
+        if matching.any() and (background is None or not _matches_background(
+            background[None, :], background_hint
+        )[0]):
+            candidate = np.median(samples[matching], axis=0)
+            support = sum(_matches_background(side, candidate).mean() >= 0.15 for side in _board_edges(hsv))
+            if support >= 2:
+                background = candidate
+    if background is None:
+        _, saturation, value = samples.T
+        occupied = (value >= config.CELL_V_MIN) | (
+            (value >= config.CELL_V_MIN - 25) & (saturation >= config.CELL_S_MIN)
+        )
+    else:
+        hue, saturation, value = _board_color_distance(samples, background)
+        occupied = (hue > 8) | (saturation > 25) | (value > 25)
     board = occupied.reshape(n, n).astype(np.int8)
-    return board, crop
+    if background is not None and background[2] >= samples[:, 2].min() + 60:
+        # A bright group of blocks can dominate the pooled border color.
+        edges = _board_edges(hsv)
+        edge = np.vstack(edges)
+        dark_edge = edge[edge[:, 2] <= np.percentile(edge[:, 2], 20)]
+        matching = _matches_background(samples, np.median(dark_edge, axis=0))
+        if matching.any():
+            alternative = np.median(samples[matching], axis=0)
+            if background[2] - alternative[2] >= 60:
+                support = sum(_matches_background(side, alternative).mean() >= 0.15 for side in edges)
+                if support >= 2 or board.all(axis=0).any() or board.all(axis=1).any():
+                    hue, saturation, value = _board_color_distance(samples, alternative)
+                    corrected = ((hue > 8) | (saturation > 25) | (value > 25)).reshape(n, n)
+                    if not (corrected.all(axis=0).any() or corrected.all(axis=1).any()):
+                        board = corrected.astype(np.int8)
+                        background = alternative
+    return board, crop, background
 
 
 def parse_piece_slot(slot_bgr: np.ndarray, *, core_x: tuple[int, int] | None = None) -> np.ndarray:
@@ -343,10 +412,12 @@ def analyze(
     frame: np.ndarray,
     board_rect: config.Rect | None = None,
     pieces_rect: config.Rect | None = None,
+    *,
+    background_hint: np.ndarray | None = None,
 ) -> VisionResult:
-    board, board_crop = parse_board(frame, board_rect)
+    board, board_crop, background = _parse_board(frame, board_rect, background_hint)
     pieces, _, piece_crops, pickups = _parse_tray(frame, pieces_rect or config.PIECES_RECT)
-    return VisionResult(board, pieces, board_crop, piece_crops, pickups)
+    return VisionResult(board, pieces, board_crop, piece_crops, pickups, background)
 
 
 def same_board_and_tray(first: np.ndarray, second: np.ndarray) -> bool:

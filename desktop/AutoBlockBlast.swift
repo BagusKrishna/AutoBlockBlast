@@ -102,18 +102,27 @@ final class BotApp: NSObject, NSApplicationDelegate {
         return formatter
     }()
     let sessionLine = NSTextField(labelWithString: "")
+    let solverMenu = NSPopUpButton(frame: .zero, pullsDown: false)
     var sessionTimer: Timer?
     var sessionStartedAt: TimeInterval?
     var elapsedSessionTime: TimeInterval = 0
-    private var playCommentTimer: Timer?
-    private var playCommentStartedAt: TimeInterval = 0
-    private let playComments = [
-        "Ahh, easy one.",
-        "Lemme place this one.",
-        "Yep, that fits.",
-        "That spot will do.",
-        "One block at a time.",
-        "Nice, room for the next one."
+    private var playAnimationTimer: Timer?
+    private var playAnimationStartedAt: TimeInterval = 0
+    private let detailFont = NSFont.systemFont(ofSize: 14)
+    private let storyFont = NSFont.monospacedSystemFont(ofSize: 10, weight: .medium)
+    private let dinoFrames = [
+        " \n        .-o>\n    .__/  /\n     \\___/\n      / \\          /^\\",
+        " \n        .-o>\n    .__/  /\n     \\___/\n       \\/        /^\\",
+        " \n        .-o>\n    .__/  /\n     \\___/\n      / \\      /^\\",
+        " \n        .-o>\n    .__/  /\n     \\___/\n       \\/    /^\\",
+        " \n        .-o>\n    .__/  /\n     \\___/\n      / \\  /^\\",
+        "        .-o>\n    .__/  /\n     \\___/\n       v\n         /^\\",
+        "        .-o>\n    .__/  /\n     \\___/\n      /_\\\n       /^\\",
+        "        .-o>\n    .__/  /\n     \\___/\n       v\n     /^\\",
+        "        .-o>\n    .__/  /\n     \\___/\n      /_\\\n   /^\\",
+        " \n        .-o>\n    .__/  /\n     \\___/\n /^\\  / \\",
+        " \n        .-o>\n    .__/  /\n     \\___/\n       \\/",
+        " \n        .-o>\n    .__/  /\n     \\___/\n      / \\",
     ]
     let startButton = NSButton(title: "Start", target: nil, action: nil)
     let pauseButton = NSButton(title: "Pause", target: nil, action: nil)
@@ -122,6 +131,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
     var stopping = false
     var hasStarted = false
     var paused = false
+    var interrupted = false
     var lastMessage = ""
     var pendingOutput = ""
     var moveCount = 0
@@ -186,10 +196,9 @@ final class BotApp: NSObject, NSApplicationDelegate {
         metrics.spacing = 16
 
         status.font = .systemFont(ofSize: 15, weight: .bold)
-        detail.font = .systemFont(ofSize: 14)
+        detail.font = detailFont
         detail.textColor = .secondaryLabelColor
         detail.maximumNumberOfLines = 3
-        detail.wantsLayer = true
         sessionLine.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         sessionLine.textColor = .secondaryLabelColor
         sessionLine.isHidden = true
@@ -198,9 +207,11 @@ final class BotApp: NSObject, NSApplicationDelegate {
         statusIcon.widthAnchor.constraint(equalToConstant: 16).isActive = true
         statusIcon.heightAnchor.constraint(equalToConstant: 16).isActive = true
         statusIcon.isHidden = true
-        let statusLine = NSStackView(views: [statusIcon, status])
+        solverMenu.addItems(withTitles: ["MultiLine", "OneLine"])
+        solverMenu.controlSize = .small
+        let statusLine = NSStackView(views: [statusIcon, status, solverMenu])
         statusLine.spacing = 8
-        sessionLine.alignment = .right
+        sessionLine.alignment = .left
         sessionLine.lineBreakMode = .byTruncatingTail
         statusLine.alignment = .centerY
 
@@ -273,40 +284,28 @@ final class BotApp: NSObject, NSApplicationDelegate {
         return Int(elapsedSessionTime + activeTime)
     }
 
-    private func showPlayComment() {
-        if playCommentTimer == nil && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            let fade = CABasicAnimation(keyPath: "opacity")
-            fade.fromValue = 1.0
-            fade.toValue = 0.62
-            fade.duration = 1.35
-            fade.autoreverses = true
-            fade.repeatCount = .infinity
-            fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            detail.layer?.add(fade, forKey: "playCommentFade")
-        }
-        if playCommentTimer == nil {
-            playCommentStartedAt = ProcessInfo.processInfo.systemUptime
-            playCommentTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-                self?.updatePlayComment()
+    private func showPlayingAnimation() {
+        if playAnimationTimer == nil {
+            detail.font = storyFont
+            detail.maximumNumberOfLines = 5
+            detail.setAccessibilityLabel("Autoplay in progress")
+            playAnimationStartedAt = ProcessInfo.processInfo.systemUptime
+            playAnimationTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                self?.updatePlayingAnimation()
             }
         }
-        updatePlayComment()
+        updatePlayingAnimation()
     }
 
-    private func updatePlayComment() {
-        let elapsed = ProcessInfo.processInfo.systemUptime - playCommentStartedAt
+    private func updatePlayingAnimation() {
+        let second = Int(ProcessInfo.processInfo.systemUptime - playAnimationStartedAt)
         let text: String
-        if elapsed < 2 {
-            text = ". . ."
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            text = dinoFrames[0]
+        } else if second < 2 {
+            text = second == 0 ? "." : ". . ."
         } else {
-            let commentTime = elapsed - 2
-            let comment = playComments[(Int(commentTime) / 15) % playComments.count]
-            if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-                text = comment
-            } else {
-                let dots = Int(commentTime.truncatingRemainder(dividingBy: 15) / 0.45) % 4
-                text = String(comment.dropLast()) + String(repeating: " .", count: dots)
-            }
+            text = dinoFrames[(second - 2) % dinoFrames.count]
         }
         if detail.stringValue != text {
             detail.stringValue = text
@@ -314,14 +313,16 @@ final class BotApp: NSObject, NSApplicationDelegate {
     }
 
     private func showDetail(_ text: String) {
-        playCommentTimer?.invalidate()
-        playCommentTimer = nil
-        detail.layer?.removeAnimation(forKey: "playCommentFade")
+        playAnimationTimer?.invalidate()
+        playAnimationTimer = nil
+        detail.font = detailFont
+        detail.maximumNumberOfLines = 3
+        detail.setAccessibilityLabel(nil)
         detail.stringValue = text
     }
 
     private func updateSessionLine() {
-        sessionLine.isHidden = status.stringValue != "Playing"
+        sessionLine.isHidden = status.stringValue != "Playing" && status.stringValue != "Paused"
         guard !sessionLine.isHidden else { return }
         let seconds = playedSeconds
         let minutesAndSeconds = "\((seconds / 60) % 60)m \(seconds % 60)s"
@@ -341,12 +342,13 @@ final class BotApp: NSObject, NSApplicationDelegate {
 
     func refreshButtons() {
         updateSessionLine()
-        startButton.isEnabled = process == nil
+        startButton.isEnabled = process == nil && !interrupted
         startButton.title = needsFolderAccess ? "Allow folder access…" : (hasStarted && process == nil ? "Restart" : "Start")
         startButton.keyEquivalent = startButton.title == "Restart" ? "\r" : ""
-        pauseButton.isEnabled = process != nil && !stopping
-        stopButton.isEnabled = process != nil && !stopping
-        pauseButton.title = paused ? "Resume" : "Pause"
+        pauseButton.isEnabled = (process != nil || interrupted) && !stopping
+        stopButton.isEnabled = (process != nil || interrupted) && !stopping
+        pauseButton.title = (paused || interrupted) ? "Resume" : "Pause"
+        solverMenu.isEnabled = process == nil || (paused && status.stringValue == "Paused")
     }
 
     func explanationForStop(_ message: String) -> String {
@@ -392,6 +394,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
 
     @objc func start() {
         guard process == nil else { return }
+        let continuing = interrupted
         if needsFolderAccess {
             let panel = NSOpenPanel()
             panel.message = "Select the AutoBlockBlast project folder to allow the app to read the bot and its environment."
@@ -411,6 +414,9 @@ final class BotApp: NSObject, NSApplicationDelegate {
         do {
             try FileManager.default.createDirectory(at: captureDirectory, withIntermediateDirectories: true)
             try? FileManager.default.removeItem(at: pauseFile)
+            try (solverMenu.indexOfSelectedItem == 1 ? "exact-one-line" : "exact").write(
+                to: captureDirectory.appendingPathComponent("solver-mode"), atomically: true, encoding: .utf8
+            )
             let task = Process()
             task.executableURL = root.appendingPathComponent(".venv/bin/python")
             task.currentDirectoryURL = root
@@ -422,6 +428,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
             task.arguments = [
                 "-u", "-m", "autoblockblast.autoplay", "--execute", "--moves", "0",
                 "--ui-metrics", "--fast-recheck", "--reuse-plan", "--chain-tray",
+                "--solver", solverMenu.indexOfSelectedItem == 1 ? "exact-one-line" : "exact",
             ]
             let pipe = Pipe()
             task.standardOutput = pipe
@@ -444,12 +451,14 @@ final class BotApp: NSObject, NSApplicationDelegate {
                     self.needsFolderAccess = self.lastMessage.contains("PermissionError:") &&
                         self.lastMessage.contains("Operation not permitted")
                     if self.stopping {
+                        self.interrupted = false
                         self.status.stringValue = "Stopped"
                         self.showDetail("Stopped by you.")
                     } else {
                         let gameHidden = self.lastMessage.lowercased().contains("not in front")
+                        self.interrupted = !self.needsFolderAccess && !self.lastMessage.contains("No complete plan")
                         self.statusIcon.isHidden = !gameHidden && finished.terminationStatus == 0 && self.lastMessage.isEmpty
-                        self.status.stringValue = gameHidden ? "Game not in front" :
+                        self.status.stringValue = self.interrupted ? "Paused" : gameHidden ? "Game not in front" :
                             (finished.terminationStatus == 0 ? "Stopped" : "Stopped with an error")
                         self.showDetail(self.needsFolderAccess
                             ? "macOS blocked access to the project folder. Click Allow folder access and select the AutoBlockBlast folder."
@@ -461,15 +470,18 @@ final class BotApp: NSObject, NSApplicationDelegate {
             }
             lastMessage = ""
             pendingOutput = ""
-            moveCount = 0
-            scoreText = "—"
-            highestCombo = nil
+            if !continuing {
+                moveCount = 0
+                scoreText = "—"
+                highestCombo = nil
+                elapsedSessionTime = 0
+            }
             metricsGeneration += 1
             updateStats()
             try task.run()
             hasStarted = true
             process = task
-            elapsedSessionTime = 0
+            interrupted = false
             sessionStartedAt = ProcessInfo.processInfo.systemUptime
             updateSessionLine()
             status.stringValue = "Starting…"
@@ -499,7 +511,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
                 if !paused && !stopping {
                     status.stringValue = line == "UI_STATUS Playing…" || moveCount > 0 ? "Playing" : "Starting…"
                     if line == "UI_STATUS Playing…" {
-                        showPlayComment()
+                        showPlayingAnimation()
                     } else {
                         showDetail(String(line.dropFirst("UI_STATUS ".count)))
                     }
@@ -513,7 +525,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
                     if paused {
                         showDetail("Finishing the current move.")
                     } else {
-                        showPlayComment()
+                        showPlayingAnimation()
                     }
                 }
             } else if line == "Paused." {
@@ -523,7 +535,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
             } else if line == "Resumed." {
                 sessionStartedAt = ProcessInfo.processInfo.systemUptime
                 status.stringValue = "Playing"
-                showPlayComment()
+                showPlayingAnimation()
             } else if line.hasPrefix("RuntimeError:") || line.hasPrefix("FileNotFoundError:") ||
                       line.hasPrefix("ConnectionError:") || line.hasPrefix("OSError:") ||
                       line.hasPrefix("PermissionError:") || line.hasPrefix("ModuleNotFoundError:") ||
@@ -531,6 +543,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
                 lastMessage = line
             } else if line.contains("Stopped") || line.contains("No complete plan") ||
                       line.contains("No fresh") || line.contains("not in front") ||
+                      line.contains("Android input focus unavailable") ||
                       line.contains("not found") || line.contains("No Android device") ||
                       line.contains("unauthorized") || line.contains("already running") ||
                       line.contains("No adb exe") || line.contains("No Android device found") ||
@@ -542,7 +555,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
             }
         }
         if status.stringValue != previousStatus || moveCount != previousMoveCount {
-            updateSessionLine()
+            refreshButtons()
         }
     }
 
@@ -611,9 +624,17 @@ final class BotApp: NSObject, NSApplicationDelegate {
     }
 
     @objc func togglePause() {
+        if interrupted && process == nil {
+            start()
+            return
+        }
         guard process != nil, !stopping else { return }
         do {
             if paused {
+                guard status.stringValue == "Paused" else { return }
+                try (solverMenu.indexOfSelectedItem == 1 ? "exact-one-line" : "exact").write(
+                    to: captureDirectory.appendingPathComponent("solver-mode"), atomically: true, encoding: .utf8
+                )
                 try FileManager.default.removeItem(at: pauseFile)
                 paused = false
                 status.stringValue = "Resuming…"
@@ -630,6 +651,13 @@ final class BotApp: NSObject, NSApplicationDelegate {
     }
 
     @objc func stop() {
+        if interrupted && process == nil {
+            interrupted = false
+            status.stringValue = "Stopped"
+            showDetail("Stopped by you.")
+            refreshButtons()
+            return
+        }
         guard process != nil, !stopping else { return }
         do {
             try Data().write(to: stopFile)

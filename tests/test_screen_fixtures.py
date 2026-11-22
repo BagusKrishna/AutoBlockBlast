@@ -5,12 +5,114 @@ import unittest
 import cv2 as cv
 import numpy as np
 
-from autoblockblast.vision import analyze, parse_pieces, pickup_geometry
+from autoblockblast.vision import analyze, parse_board, parse_piece_slot, parse_pieces, pickup_geometry
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class ScreenFixtures(unittest.TestCase):
+    def test_confirmed_background_outweighs_bright_border_when_still_visible(self):
+        rows = ["####.###", "####.###", "#.##.###", ".##..###",
+                "......##", "..#####.", "..####..", "#.######"]
+        expected = np.array([[cell == "#" for cell in row] for row in rows])
+        occupied = (30, 195, 160)
+        empty = np.array((5, 145, 110))
+        cells = np.where(expected[..., None], occupied, empty)
+        hsv = cells.repeat(40, axis=0).repeat(40, axis=1).astype(np.uint8)
+        hsv[:5] = hsv[-5:] = hsv[:, :5] = hsv[:, -5:] = occupied
+        hsv[5:185, :5] = hsv[-5:, 5:185] = empty
+        frame = cv.cvtColor(hsv, cv.COLOR_HSV2BGR)
+
+        result = analyze(frame, board_rect=(0, 0, 1, 1), background_hint=empty)
+
+        np.testing.assert_array_equal(result.board, expected)
+
+    def test_inverted_board_can_have_no_apparently_full_lines(self):
+        rows = ["####.###", "####.###", "#.##.###", ".##..###",
+                "......##", "..#####.", "..####..", "#.######"]
+        expected = np.array([[cell == "#" for cell in row] for row in rows])
+        full, empty = (24, 193, 253), (10, 152, 69)
+        cells = np.where(expected[..., None], full, empty)
+        hsv = cells.repeat(40, axis=0).repeat(40, axis=1).astype(np.uint8)
+        hsv[:5] = hsv[-5:] = hsv[:, :5] = hsv[:, -5:] = full
+        hsv[5:185, :5] = hsv[-5:, 5:185] = empty
+
+        board, _ = parse_board(cv.cvtColor(hsv, cv.COLOR_HSV2BGR), board_rect=(0, 0, 1, 1))
+
+        np.testing.assert_array_equal(board, expected)
+
+    def test_full_row_in_inverted_read_uses_dark_border_reference(self):
+        rows = ["#.######", "###.####", "##..####", "...###..",
+                "#.######", "........", "##.#####", "###....#"]
+        expected = np.array([[cell == "#" for cell in row] for row in rows])
+        cells = np.where(expected[..., None], (23, 199, 253), (10, 152, 69))
+        hsv = cells.repeat(40, axis=0).repeat(40, axis=1).astype(np.uint8)
+        hsv[:5] = (23, 199, 253)
+        hsv[-5:] = (10, 152, 69)
+        hsv[:, :5] = (23, 199, 253)
+        hsv[:, -5:] = (23, 199, 253)
+
+        board, _ = parse_board(cv.cvtColor(hsv, cv.COLOR_HSV2BGR), board_rect=(0, 0, 1, 1))
+
+        np.testing.assert_array_equal(board, expected)
+
+    def test_gray_board_ignores_hue_noise_but_detects_blocks(self):
+        cells = np.resize(np.array([(100, 16, 33), (120, 15, 34), (0, 0, 32)]), (8, 8, 3))
+        cells[2, 3] = (120, 15, 100)
+        cells[6, 5] = (30, 180, 34)
+        hsv = cells.repeat(40, axis=0).repeat(40, axis=1).astype(np.uint8)
+        frame = cv.cvtColor(hsv, cv.COLOR_HSV2BGR)
+        expected = np.zeros((8, 8), dtype=np.int8)
+        expected[2, 3] = expected[6, 5] = 1
+
+        board, _ = parse_board(frame, board_rect=(0, 0, 1, 1))
+
+        np.testing.assert_array_equal(board, expected)
+
+    def test_gray_tray_preserves_shape_and_rejects_near_black_frames(self):
+        hsv = np.full((120, 130, 3), (0, 0, 62), dtype=np.uint8)
+        hsv[25:97, 49:89] = (100, 20, 66)
+        hsv[34:52, 51:87] = (80, 180, 232)
+        hsv[52:88, 69:87] = (80, 180, 232)
+        slot = cv.cvtColor(hsv, cv.COLOR_HSV2BGR)
+        self.assertEqual(parse_piece_slot(slot).tolist(), [[1, 1], [0, 1], [0, 1]])
+
+        dim_slot = np.round(slot * 0.1).astype(np.uint8)
+        self.assertFalse(parse_piece_slot(dim_slot).size)
+
+    def test_orange_board_with_colored_edges_keeps_empty_cells(self):
+        rows = [
+            "###...##", "..##..##", "....####", "..#.####",
+            "..##.###", ".#....#.", "####...#", "#.###.##",
+        ]
+        board = np.array([[cell == "#" for cell in row] for row in rows])
+        cells = np.where(board[..., None], (112, 216, 182), (9, 188, 69))
+        hsv = cells.repeat(40, axis=0).repeat(40, axis=1).astype(np.uint8)
+        hsv[:5] = (11, 180, 69)
+        hsv[-5:] = (60, 214, 100)
+        hsv[:, :5] = (8, 205, 66)
+        hsv[:, -5:] = (112, 216, 182)
+
+        frame = cv.cvtColor(hsv, cv.COLOR_HSV2BGR)
+        actual, _ = parse_board(frame, board_rect=(0, 0, 1, 1))
+
+        np.testing.assert_array_equal(actual, board)
+
+    def test_green_board_uses_agreement_across_edges_over_bright_blocks(self):
+        expected = np.zeros((8, 8), dtype=np.int8)
+        expected.ravel()[:41] = 1
+        cells = np.where(expected[..., None], (1, 159, 250), (66, 182, 56))
+        hsv = cells.repeat(40, axis=0).repeat(40, axis=1).astype(np.uint8)
+        hsv[:5] = (4, 165, 224)
+        hsv[-5:] = (59, 193, 89)
+        hsv[:, :5] = (65, 172, 96)
+        hsv[:, -5:] = (2, 172, 199)
+
+        frame = cv.cvtColor(hsv, cv.COLOR_HSV2BGR)
+        board, _ = parse_board(frame, board_rect=(0, 0, 1, 1))
+
+        np.testing.assert_array_equal(board, expected)
+
     def test_long_bar_does_not_bleed_into_empty_middle_slot(self):
         for x, slot in ((31, 0), (238, 2)):
             with self.subTest(slot=slot):

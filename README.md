@@ -2,11 +2,13 @@
 
 AutoBlockBlast runs on a Mac and plays **Block Blast on an Android phone connected through ADB over USB or Wi-Fi**. Use it to preview the bot's suggested placements or let it play automatically. It reads the board and tray from a scrcpy video stream, searches the legal placements for the visible pieces, and verifies the result after every ADB drag.
 
-## Autoplay preview
+## Preview
 
-A short recording of the bot playing on a Samsung Galaxy A72.
+| Galaxy A72 gameplay | AutoBlockBlast for Mac |
+| --- | --- |
+| <img src="docs/media/autoplay.gif" width="280" alt="Five autoplay moves on a Galaxy A72 with the live score visible"> | <img src="docs/media/desktop-preview.png" width="470" alt="Mac app showing the final score, highest combo, and jumping ASCII dino"> |
 
-![AutoBlockBlast autoplay preview](docs/media/autoplay.gif)
+The recording shows five verified placements and a score increase from **835,965** to **836,142**. The Mac preview shows the final score and highest combo from that run alongside the current solver picker.
 
 ## Tested setup
 
@@ -19,7 +21,7 @@ A short recording of the bot playing on a Samsung Galaxy A72.
 
 Other Android devices may need board, tray and drag calibration. The tested setup covers Android. Support for additional game themes and device layouts depends on validation.
 
-The default solver searches every legal order and position for the pieces it can see. It favors any all-clear in a plan that uses the tray, then the number of placements that clear lines, the total lines cleared, and space for future pieces. Clear counts approximate the game's combo and scoring behavior.
+The default solver searches every legal order and position for the pieces it can see. It first favors a complete tray that produces an all-clear. It then favors clearing multiple lines in the same placement by adding the square of each placement's clear count. Total lines, number of clearing placements and space for future pieces break ties. The weighting is a scoring heuristic.
 
 ## Setup
 
@@ -62,17 +64,15 @@ See the [Android wireless debugging guide](https://developer.android.com/tools/a
 
 ## Mac desktop app
 
-![AutoBlockBlast desktop app while playing](docs/media/desktop-preview.png)
-
-The screenshot is from an earlier build. The current app shows **Highest combo** and a smaller, right-aligned session line such as `Running for 1m 23s · 99 moves` while playing.
+While playing, the app shows a jumping ASCII dino and a session timer next to the move count.
 
 Build the app once from the project folder with `desktop/build-app.sh`. This requires Apple's Swift compiler and the Python environment from setup. Double-click `AutoBlockBlast.app` in the project folder to open it.
 
-Connect the phone, open Block Blast and click **Start**. **Pause** finishes the current move and waits, then **Resume** continues after checking the game state. **Stop** ends the session after the current move. The app reads the current score and tracks the highest combo recognized during the current autoplay session. A lower reading leaves that record in place. Starting a new session resets the displayed combo record. The app also shows verified moves and any stopping reason.
+Connect the phone, open Block Blast and click **Start**. **Pause** finishes the current move and waits, then **Resume** continues after checking the game state. When paused, choose **OneLine** for more clearing placements or **MultiLine** for clears that combine several lines in one placement. An interrupted session can resume with its elapsed time and move count preserved. **Stop** ends the session after the current move. The app reads the current score and tracks the highest combo recognized during the current autoplay session. A lower reading leaves that record in place. Starting a new session resets the displayed combo record. The app also shows verified moves and any stopping reason.
 
 ## Run in Terminal
 
-The default swipe duration is 150 ms, verified on the Galaxy A72 over USB. If a swipe leaves the board and tray unchanged, autoplay confirms that state on fresh frames and retries the same placement once at 250 ms. Use `--drag-ms` during a bounded run to test a different duration.
+The default swipe duration is 150 ms. Swipes that travel horizontally across at least a third of the display use 250 ms to give the game more time to track the drag. If a swipe leaves the board and tray unchanged, autoplay confirms that state on fresh frames and retries the placement at 250 ms, then at 400 ms if the board and tray are still unchanged. Use `--drag-ms` during a bounded run to test a different duration.
 
 ```bash
 # Read the board and print a plan without touching the phone
@@ -108,12 +108,12 @@ Audit results are appended locally to `captures/audit.jsonl`, which is ignored b
 
 The Mac app uses the faster pre-drag check and reuses the remaining exact plan after each verified move. The faster pre-drag check confirms that a fresh video frame matches the previously stabilized board and tray. If the frame differs or fails to arrive promptly, it falls back to the full stable read. The bot verifies every placement against the predicted board and tray before reusing the rest of a plan. Resuming after a pause starts with a fresh board read and calculation. The app uses `--chain-tray` to reuse the recent verified frame for the next move within a tray. If a newer frame is available, the bot checks it immediately and falls back to the regular pre-drag check if the decoded board or tray differs. It reuses pickup coordinates when they match the last state and takes updated coordinates from the existing frame read if the piece shifted. The foreground and post-drag checks still run. In chained play, two fresh frames that match the full predicted board and remaining tray can confirm a clear without a minimum time gap between the frames. The app can continue while an effect is still visible if the board and tray match. Tray refills still use the full stability check. If a pre-drag read differs, the bot waits for the original state or corroborates the changed state with another stable read. It can recalculate once before the next swipe. When the solver finds no complete plan, it checks for a changed board or tray before stopping. Every swipe still requires post-drag verification.
 
-Use `--solver beam` to compare the original ranking or `--solver beam-all-clear` to compare width-40 beam search using the new ranking.
+Use `--solver beam` to compare the original beam search or `--solver beam-all-clear` to try width-40 beam search that prioritizes all-clear and individual clearing placements.
 
 ## Troubleshooting
 
 - **No fresh, stable game state.** Keep the game visible, dismiss any overlays, and wait for animations to settle. Run preview to check the board and tray before resuming autoplay.
-- **Board or tray mismatch.** Open `captures/last-failure/transition.json` to inspect the expected and observed states. Keep any accompanying images local.
+- **Board or tray mismatch.** If two stable reads confirm exactly one alternate legal landing and the expected tray transition, the bot recalculates from that board. For a mismatch that cannot be verified, open `captures/last-failure/transition.json` to inspect the expected and observed states. Keep any accompanying images local.
 - **Changes appear missing.** Run the command from the `AutoBlockBlast` checkout that contains this README. The original `blockblast-vision-bot` checkout has a separate entry point.
 
 ## Tests

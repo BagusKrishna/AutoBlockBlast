@@ -15,12 +15,13 @@ from autoblockblast import config
 from autoblockblast.controller import Controller
 from autoblockblast.phone import get_device, physical_size, require_game
 from autoblockblast.scrcpy_stream import ScrcpyStream
-from autoblockblast.solver import apply_move, format_solution, solve, solve_exact
+from autoblockblast.solver import apply_move, format_solution, iter_placements, solve, solve_exact
 from autoblockblast.vision import analyze, format_state, render_debug, same_board_and_tray
 
 ROOT = Path(__file__).resolve().parents[2]
 STOP_FILE = ROOT / "captures" / "stop.request"
 PAUSE_FILE = ROOT / "captures" / "pause.request"
+SOLVER_FILE = ROOT / "captures" / "solver-mode"
 UI_METRICS = False
 _last_metrics_at = 0.0
 _metrics_ready = False
@@ -70,15 +71,23 @@ def emit_metrics_frame(frame):
         print("UI_FRAME " + base64.b64encode(encoded).decode("ascii"), flush=True)
 
 
-def read_stable(device, stream, *, after=0.0, timeout=8.0, need_pieces=True, expected_key=None):
+def analyze_with_reference(frame, reference):
+    hint = getattr(reference, "board_background", None)
+    return analyze(frame, background_hint=hint) if hint is not None else analyze(frame)
+
+
+def read_stable(device, stream, *, after=0.0, timeout=8.0, need_pieces=True, expected_key=None,
+                reference=None, expected_board=None):
     deadline = time.monotonic() + timeout
     previous = None
     previous_at = 0.0
     seen_at = after
     saw_valid_state = False
+    saw_inverted_board = False
+    check_stop()
+    require_game(device)
     while time.monotonic() < deadline:
         check_stop()
-        require_game(device)
         if not stream.alive:
             raise RuntimeError("Phone video stream stopped. Reconnect and restart the bot.")
         frame, received_at = stream.snapshot(after=seen_at)
@@ -86,8 +95,15 @@ def read_stable(device, stream, *, after=0.0, timeout=8.0, need_pieces=True, exp
             time.sleep(0.04)
             continue
         seen_at = received_at
+        require_game(device)
         emit_metrics_frame(frame)
-        state = analyze(frame)
+        state = analyze_with_reference(frame, reference)
+        if any(board is not None and np.array_equal(state.board == 0, board)
+               for board in (getattr(reference, "board", None), expected_board)):
+            saw_inverted_board = True
+            previous = None
+            time.sleep(0.04)
+            continue
         invalid_piece = any(p.size and (max(p.shape) > 5 or p.sum() > 9) for p in state.pieces)
         if invalid_piece or (need_pieces and not any(p.size for p in state.pieces)):
             # Refill and clear animations can temporarily resemble oversized pieces.
@@ -106,6 +122,8 @@ def read_stable(device, stream, *, after=0.0, timeout=8.0, need_pieces=True, exp
         time.sleep(0.04)
     if seen_at == after:
         reason = "No new video frames arrived from the phone."
+    elif saw_inverted_board:
+        reason = "The board colors appeared inverted. Keep Block Blast visible and resume once the board settles."
     elif not saw_valid_state:
         reason = "Video arrived, but the tray could not be read reliably."
     else:
@@ -125,12 +143,12 @@ def recheck_latest(device, stream, state, state_at):
         check_stop()
         frame, received_at = stream.snapshot(after=state_at)
         if frame is not None and state_at < received_at and time.monotonic() - received_at <= 0.25:
-            current = analyze(frame)
+            current = analyze_with_reference(frame, state)
             if state_key(current) == expected:
                 return (frame, current, received_at), True
             break
         time.sleep(0.01)
-    return read_stable(device, stream, after=state_at), False
+    return read_stable(device, stream, after=state_at, reference=state), False
 
 
 def wait_for_planned_state(device, stream, state, *, after, changed_key=None):
@@ -140,7 +158,7 @@ def wait_for_planned_state(device, stream, state, *, after, changed_key=None):
     while time.monotonic() < deadline:
         try:
             observed = read_stable(device, stream, after=after,
-                                   timeout=max(0.0, deadline - time.monotonic()))
+                                   timeout=max(0.0, deadline - time.monotonic()), reference=state)
         except StableReadTimeout:
             break
         key = state_key(observed[1])
@@ -167,7 +185,7 @@ def reuse_verified_frame(stream, verified):
         return None
     if same_board_and_tray(frame, latest):
         return latest, state, latest_at
-    current = analyze(latest)
+    current = analyze_with_reference(latest, state)
     if state_key(current) == state_key(state):
         return latest, current, latest_at
     return None
@@ -181,15 +199,37 @@ def verify_transition(before, after, placement):
         changed = np.argwhere(after.board != expected)
         locations = ", ".join(f"({int(r)+1},{int(c)+1})" for r, c in changed[:8])
         raise RuntimeError(f"Stopped: the board differs from the prediction in {len(changed)} cells at row,column {locations}. See captures/last-failure/.")
-    remaining = [i for i, p in enumerate(before.pieces) if p.size and i != placement.piece_index]
+    verify_tray_transition(before, after, placement.piece_index)
+
+
+def verify_tray_transition(before, after, piece_index):
+    remaining = [i for i, p in enumerate(before.pieces) if p.size and i != piece_index]
     if remaining:
-        if after.pieces[placement.piece_index].size:
+        if after.pieces[piece_index].size:
             raise RuntimeError("Stopped: the dragged piece is still in its tray slot.")
-        if any(not np.array_equal(before.pieces[i], after.pieces[i]) for i in range(len(before.pieces)) if i != placement.piece_index):
+        if any(not np.array_equal(before.pieces[i], after.pieces[i]) for i in range(len(before.pieces)) if i != piece_index):
             raise RuntimeError("Stopped: another tray piece changed unexpectedly.")
 
     elif not all(piece.size for piece in after.pieces):
         raise RuntimeError("Waiting for a complete tray refill after the last piece.")
+
+
+def find_shifted_placement(before, observed, intended):
+    if np.array_equal(observed.board, before.board):
+        return None
+    try:
+        verify_tray_transition(before, observed, intended.piece_index)
+    except RuntimeError:
+        return None
+    piece = before.pieces[intended.piece_index]
+    match = None
+    for row, col in iter_placements(before.board, piece):
+        board, _ = apply_move(before.board, piece, row, col)
+        if np.array_equal(board, observed.board):
+            if match is not None:
+                return None
+            match = replace(intended, row=row, col=col)
+    return match if match != intended else None
 
 
 def save_debug(device, frame, state, name):
@@ -227,26 +267,33 @@ def save_failure(device, before, placement, failure, *, before_frame, before_at,
 
 
 def wait_verified(device, stream, before, placement, *, after, before_frame=None, before_at=None,
-                  debug=False, early_clear=False):
+                  debug=False, early_clear=False, recover_shifted=False):
+    board, cleared = apply_move(
+        before.board, before.pieces[placement.piece_index], placement.row, placement.col
+    )
+    all_clear = bool(cleared and not board.any())
     read_options = {}
-    if early_clear and sum(bool(piece.size) for piece in before.pieces) > 1:
-        board, cleared = apply_move(
-            before.board, before.pieces[placement.piece_index], placement.row, placement.col
+    if early_clear and cleared and sum(bool(piece.size) for piece in before.pieces) > 1:
+        tray = list(before.pieces)
+        tray[placement.piece_index] = np.empty((0, 0), dtype=np.int8)
+        read_options["expected_key"] = (
+            board.tobytes(), tuple((piece.shape, piece.tobytes()) for piece in tray)
         )
-        if cleared:
-            tray = list(before.pieces)
-            tray[placement.piece_index] = np.empty((0, 0), dtype=np.int8)
-            read_options["expected_key"] = (
-                board.tobytes(), tuple((piece.shape, piece.tobytes()) for piece in tray)
-            )
-    deadline = time.monotonic() + 6.0
+    started = time.monotonic()
+    deadline = started + 6.0
+    dim_threshold = None
+    if all_clear and before_frame is not None:
+        brightness = np.median(before_frame[::8, ::8].max(axis=2))
+        dim_threshold = min(brightness * 0.5, brightness - 45)
     cursor = after
     failure = None
     observed = None
+    shifted_key = None
+    shifted_at = 0.0
     while time.monotonic() < deadline:
         try:
             observed = read_stable(device, stream, after=cursor, timeout=max(0, deadline - time.monotonic()), need_pieces=False,
-                                   **read_options)
+                                   reference=before, expected_board=board, **read_options)
         except StableReadTimeout as exc:
             if failure is None:
                 failure = exc
@@ -255,7 +302,27 @@ def wait_verified(device, stream, before, placement, *, after, before_frame=None
         try:
             verify_transition(before, state, placement)
         except RuntimeError as exc:
-            failure = exc
+            if dim_threshold is not None and np.median(frame[::8, ::8].max(axis=2)) <= dim_threshold:
+                deadline = started + 12.0
+                failure = RuntimeError(
+                    "Stopped: the game screen stayed dim after an all-clear. "
+                    "Check Block Blast before restarting. See captures/last-failure/."
+                )
+                shifted_key = None
+            else:
+                failure = exc
+                if recover_shifted and not np.array_equal(state.board, board):
+                    key = state_key(state)
+                    if key == shifted_key:
+                        if cursor - shifted_at >= 0.15 and cursor - after >= 0.5:
+                            if debug:
+                                save_debug(device, frame, state, "after.png")
+                            return observed
+                        continue
+                    if find_shifted_placement(before, state, placement) is not None:
+                        shifted_key, shifted_at = key, cursor
+                        continue
+                shifted_key = None
             continue
         if debug:
             save_debug(device, frame, state, "after.png")
@@ -292,6 +359,7 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
     stream = ScrcpyStream(device)
     played = 0
     verified = None
+    last_confirmed = None
     remaining_plan = None
     tray_pickups = {}
     all_clear_earned = False
@@ -313,8 +381,18 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
                 verified = None
                 remaining_plan = None
                 initial_plan = None
+            if UI_METRICS and solver in ("exact", "exact-one-line"):
+                mode = SOLVER_FILE.read_text().strip()
+                if mode not in ("exact", "exact-one-line"):
+                    raise RuntimeError("Invalid solver selection.")
+                if mode != solver:
+                    solver = mode
+                    verified = remaining_plan = initial_plan = None
             started = time.monotonic()
-            planning_frame, state, state_at = verified if verified is not None else read_stable(device, stream)
+            planning_frame, state, state_at = verified if verified is not None else read_stable(
+                device, stream, reference=last_confirmed
+            )
+            last_confirmed = state
             ready = time.monotonic()
             if played == 0:
                 stage("Calculating the first move…")
@@ -322,8 +400,9 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
             solve_started = time.monotonic()
             if remaining_plan is not None:
                 plan = remaining_plan
-            elif solver == "exact":
-                plan = solve_exact(state.board, state.pieces, all_clear_earned=all_clear_earned)
+            elif solver in ("exact", "exact-one-line"):
+                plan = solve_exact(state.board, state.pieces, all_clear_earned=all_clear_earned,
+                                   **({"one_line": True} if solver == "exact-one-line" else {}))
             else:
                 plan = solve(state.board, state.pieces, all_clear_first=solver == "beam-all-clear")
             planned = time.monotonic()
@@ -355,7 +434,7 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
             if plan is None or not plan.placements or not plan.complete:
                 if not replanned:
                     stage("Checking the board and tray again…")
-                    latest = read_stable(device, stream, after=state_at, timeout=2.0)
+                    latest = read_stable(device, stream, after=state_at, timeout=2.0, reference=state)
                     if state_key(latest[1]) != state_key(state):
                         verified = latest
                         remaining_plan = initial_plan = None
@@ -373,7 +452,7 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
             elif quick_trial:
                 (frame, current, current_at), used_quick_frame = recheck_latest(device, stream, state, state_at)
             else:
-                frame, current, current_at = read_stable(device, stream, after=state_at)
+                frame, current, current_at = read_stable(device, stream, after=state_at, reference=state)
             planned_key = state_key(state)
             current_key = state_key(current)
             if current_key != planned_key:
@@ -420,7 +499,7 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
             try:
                 verified = wait_verified(device, stream, current, placement, after=released,
                                          before_frame=frame, before_at=current_at, debug=debug,
-                                         early_clear=early_clear or chain_tray)
+                                         early_clear=early_clear or chain_tray, recover_shifted=True)
             except SwipeDidNotLand as exc:
                 retry_ms = 250
                 if drag_ms is not None or config.DRAG_MS >= retry_ms:
@@ -441,19 +520,47 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
                     retry_frame.shape, frame=retry_frame, duration_ms=retry_ms, settle=False,
                 )
                 retried = True
-                verified = wait_verified(device, stream, retry_state, placement, after=retry_release,
-                                         before_frame=retry_frame, before_at=retry_at, debug=debug)
+                try:
+                    verified = wait_verified(device, stream, retry_state, placement, after=retry_release,
+                                             before_frame=retry_frame, before_at=retry_at, debug=debug,
+                                             recover_shifted=True)
+                except SwipeDidNotLand as retry_failure:
+                    stage("Swipe did not land. Checking again before a slower retry…")
+                    retry_frame, retry_state, retry_at = wait_for_planned_state(
+                        device, stream, current, after=retry_failure.received_at
+                    )
+                    if wait_if_paused():
+                        verified = remaining_plan = initial_plan = None
+                        continue
+                    check_stop()
+                    retry_release = controller.drag_piece(
+                        placement.piece_index, retry_state.pieces[placement.piece_index], placement,
+                        retry_frame.shape, frame=retry_frame, duration_ms=400, settle=False,
+                    )
+                    verified = wait_verified(device, stream, retry_state, placement, after=retry_release,
+                                             before_frame=retry_frame, before_at=retry_at, debug=debug,
+                                             recover_shifted=True)
+            expected, cleared = apply_move(
+                current.board, current.pieces[placement.piece_index], placement.row, placement.col
+            )
+            shifted = not np.array_equal(verified[1].board, expected)
+            last_confirmed = verified[1]
+            if shifted:
+                actual = find_shifted_placement(current, verified[1], placement)
+                if actual is None:
+                    raise RuntimeError("Stopped: the shifted placement could not be confirmed.")
+                print(f"Swipe landed at row {actual.row + 1}, column {actual.col + 1}; recalculating from the verified board.", flush=True)
+                placement = actual
+                _, cleared = apply_move(
+                    current.board, current.pieces[placement.piece_index], placement.row, placement.col
+                )
             if sum(bool(piece.size) for piece in current.pieces) == 1:
                 all_clear_earned = False
             else:
                 all_clear_earned |= not verified[1].board.any()
             finished = time.monotonic()
             remaining_plan = None
-            if reuse_plan or audit:
-                _, cleared = apply_move(
-                    current.board, current.pieces[placement.piece_index], placement.row, placement.col
-                )
-            if reuse_plan and len(plan.placements) > 1:
+            if reuse_plan and not shifted and len(plan.placements) > 1:
                 # wait_verified has already matched the predicted board and remaining tray.
                 remaining_plan = replace(
                     plan, placements=plan.placements[1:],
@@ -506,7 +613,7 @@ def main():
     parser.add_argument("--compare-recheck", action="store_true", help="Alternate stable and quick rechecks by tray in a bounded audit")
     parser.add_argument("--audit", action="store_true", help="Append local timing and plan comparisons to captures/audit.jsonl")
     parser.add_argument("--ui-metrics", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--solver", choices=("exact", "beam", "beam-all-clear"), default="exact")
+    parser.add_argument("--solver", choices=("exact", "exact-one-line", "beam", "beam-all-clear"), default="exact")
     args = parser.parse_args()
     global UI_METRICS
     UI_METRICS = args.ui_metrics
@@ -516,7 +623,7 @@ def main():
         parser.error("--early-clear requires --execute and a positive --moves")
     if args.chain_tray and (not args.reuse_plan or not args.execute):
         parser.error("--chain-tray requires --reuse-plan and --execute")
-    if args.reuse_plan and (args.audit or args.solver != "exact"):
+    if args.reuse_plan and (args.audit or args.solver not in ("exact", "exact-one-line")):
         parser.error("--reuse-plan requires the exact solver and cannot be combined with --audit")
     if args.compare_recheck and (args.fast_recheck or not args.audit or not args.execute or args.moves <= 0):
         parser.error("--compare-recheck requires --audit, --execute and a positive --moves, without --fast-recheck")
