@@ -109,61 +109,19 @@ final class BotApp: NSObject, NSApplicationDelegate {
     private var playAnimationStartedAt: TimeInterval = 0
     private let detailFont = NSFont.systemFont(ofSize: 14)
     private let storyFont = NSFont.monospacedSystemFont(ofSize: 10, weight: .medium)
-    private let duelFrames = [
-        // The fighters close in.
-        " .-.            .-.\n(o >)          (< x)\n/|#|\\          /|#|\\\n |=|            |=|\n/   \\          /   \\",
-        "  .-.          .-.\n (o >)        (< x)\n /|#|-        /|#|\\\n  |=|          |=|\n  / /         /   \\",
-        "  .-.          .-.\n (o >)        (< x)\n /|#|\\        -|#|\\\n  |=|          |=|\n /   \\         \\ \\",
-        "   .-.        .-.\n  (o >)      (< x)\n  /|#|-      /|#|\\\n   |=|        |=|\n   / /       /   \\",
-        "   .-.        .-.\n  (o >)      (< x)\n  /|#|\\      -|#|\\\n   |=|        |=|\n  /   \\       \\ \\",
-        "    .-.      .-.\n   (o >)    (< x)\n   /|#|-    /|#|\\\n    |=|      |=|\n    / /     /   \\",
-        "    .-.      .-.\n   (o >)    (< x)\n   /|#|\\    -|#|\\\n    |=|      |=|\n   /   \\     \\ \\",
-        "    .-.      .-.\n   (o >)    (< x)\n   /|#|\\ +  /|#|\\\n    |=|      |=|\n   /   \\    /   \\",
-        // They trade the first blows.
-        "     .-.     .-.\n    (o>)    (< x)\n   /|#|=--* /|#|\\\n    |=|      |=|\n   /  /     /   \\",
-        "     .-.      .-.\n    (o>)     (x >)\n   /|#|_---  /|#|\\\n     |=\\       |=/\n    _/        / /",
-        "    .-.      .-.\n   (o >)    (< x)\n   /|#|\\  <=-|#|\\\n    |=|      |=|\n   /   \\     \\ \\",
-        "   .-.      .-.\n  (< o)     (<x)\n  /|#|\\ <---_|#|\\\n  \\=|       /=|\n   \\ \\        \\_",
-        "   .-.       .-.\n  (o >)   / (< x)\n  /|#|-     /|#|\\\n   |=|       |=|\n   / /      /   \\",
-        "     .-.    .-.\n    (o>)    (<x)\n   /|#|=-+- =|#|\\\n    |=|      |=|\n   /  /      \\  \\",
-        "    .-.      .-.\n   (o >)  . (< x)\n   /|#|\\    /|#|\\\n    |=|      |=|\n   /   \\    /   \\",
-        "   .-.        .-.\n  (o >)      (< x)\n  /|#|-      -|#|\\\n   |=|        |=|\n   / /        \\ \\",
-        // A feint, a duck, and a counter.
-        "     .-.     .-.\n    (o>) /  (< x)\n   /|#|=    /|#|\\\n    |=|      |=|\n   /  /     /   \\",
-        "     .-.\n    (o>)    .-.\n   /|#|_----(<x)\n     |=\\    _|#|\\\n    _/      /__\\",
-        "     .-.\n    (o>)     .-.\n   /|#|_---. (<x)\n     |=\\     _|#|\\\n    _/       /__\\",
-        "    .-.      .-.\n   (o >)     (<x)\n   /|#|\\ <====|#|\\\n    |=|       |=|\n   /   \\      \\  \\",
-        "   .-.      .-.\n  (< o)     (<x)\n  /|#|\\ <---_|#|\\\n  \\=|       /=|\n   \\ \\        \\_",
-        "            .-.\n    .-. <---(<x)\n   (o>)     _|#|\\\n  /|#|_     /=|\n   /__\\       \\_",
-        "              .-.\n    .-.   +  (< x)\n   (o>)      /|#|\\\n  /|#|_       |=|\n   /__\\      /   \\",
-        "    .-.      .-.\n   (o >)    (< x)\n   /|#|-    -|#|\\\n    |=|      |=|\n    / /      \\ \\",
-        // Both rush in and lose their blades.
-        "     .-.    .-.\n    (o>)    (<x)\n   /|#|====-=|#|\\\n    |=|      |=|\n   /  /      \\  \\",
-        "      .-.  .-.\n     (o>)  (<x)\n    /|#|==*=|#|\\\n     |=|    |=|\n    /  /    \\  \\",
-        "      .-.  .-.\n     (o>)\\/(<x)\n    /|#|_+*_|#|\\\n      |=\\  /=|\n     _/      \\_",
-        "    .-. /  \\ .-.\n   (< o)    (x >)\n   /|#|\\    /|#|\\\n   \\=|        |=/\n    \\ \\      / /",
-        "   .-.        .-.\n  (< o) '  ` (x >)\n  /|#|\\      /|#|\\\n  \\=|          |=/\n   \\ \\        / /",
-        "   .-.        .-.\n  (o >)      (< x)\n  /|#|\\      /|#|\\\n   |=|  \\  /  |=|\n  /  \\        /  \\",
-        "   .-.        .-.\n  (o >)      (< x)\n  /|#|\\      /|#|\\\n   |=|        |=|\n  /  \\  -  -  /  \\",
-        "    .-.      .-.\n   (o >)    (< x)\n   /|#|\\    /|#|\\\n    |=|      |=|\n   /  \\ -  - /  \\",
-        // They lower their guard and shake hands.
-        "    .-.\n   (o >)    .-.\n   /|#|\\    (<x)\n    |=|     _|#|\\\n   /  \\ -  -/__\\",
-        "             .-.\n     .-.    (< x)\n    (o>)    /|#|\\\n   /|#|_     |=|\n    /__\\-  - /  \\",
-        "    .-.      .-.\n   (o >)    (< x)\n   /|#|\\ .  /|#|\\\n    |=|      |=|\n   /  \\ -  - /  \\",
-        "    .-.      .-.\n   (o >)    (< x)\n   /|#|\\  ~ -|#|\\\n    |=|      |=|\n   /  \\      /  \\",
-        "    .-.      .-.\n   (o >)    (< x)\n   /|#|- -- -|#|\\\n    |=|      |=|\n   /  \\      /  \\",
-        "     .-.    .-.\n    (o >)  (< x)\n    /|#|-==-|#|\\\n     |=|    |=|\n    /  \\    /  \\",
-        "     .-.    .-.\n    (o >) +(< x)\n    /|#|----|#|\\\n     |=|    |=|\n    /  \\    /  \\",
-        "     .-.    .-.\n    (o >)  (< x)\n    /|#|\\  /|#|\\\n     |=|    |=|\n    /  \\    /  \\",
-        // They bow and reset for a rematch.
-        "            .-.\n      .-.  (< x)\n     /o>)  /|#|\\\n    /|#|    |=|\n     / \\    /  \\",
-        "\n      .-.  .-.\n     /o>)  (<x\\\n    /|#|    |#|\\\n     / \\    / \\",
-        "     .-.\n    (o >)  .-.\n    /|#|\\  (<x\\\n     |=|    |#|\\\n    /  \\    / \\",
-        "     .-.  * .-.\n    (o >)  (< x)\n    /|#|\\  /|#|\\\n     |=|    |=|\n    /  \\    /  \\",
-        "    .-.      .-.\n   (o >)    (< x)\n   /|#|-    /|#|\\\n    |=|      |=|\n    / /     /   \\",
-        "   .-.        .-.\n  (o >)      (< x)\n  /|#|\\      -|#|\\\n   |=|        |=|\n  /   \\       \\ \\",
-        "  .-.          .-.\n (o >)        (< x)\n /|#|-        -|#|\\\n  |=|          |=|\n  / /          \\ \\",
-        " .-.            .-.\n(o >)          (< x)\n/|#|\\          -|#|\\\n |=|            |=|\n/   \\           \\ \\",
+    private let dinoFrames = [
+        " \n        .-o>\n    .__/  /\n     \\___/\n      / \\          /^\\",
+        " \n        .-o>\n    .__/  /\n     \\___/\n       \\/        /^\\",
+        " \n        .-o>\n    .__/  /\n     \\___/\n      / \\      /^\\",
+        " \n        .-o>\n    .__/  /\n     \\___/\n       \\/    /^\\",
+        " \n        .-o>\n    .__/  /\n     \\___/\n      / \\  /^\\",
+        "        .-o>\n    .__/  /\n     \\___/\n       v\n         /^\\",
+        "        .-o>\n    .__/  /\n     \\___/\n      /_\\\n       /^\\",
+        "        .-o>\n    .__/  /\n     \\___/\n       v\n     /^\\",
+        "        .-o>\n    .__/  /\n     \\___/\n      /_\\\n   /^\\",
+        " \n        .-o>\n    .__/  /\n     \\___/\n /^\\  / \\",
+        " \n        .-o>\n    .__/  /\n     \\___/\n       \\/",
+        " \n        .-o>\n    .__/  /\n     \\___/\n      / \\",
     ]
     let startButton = NSButton(title: "Start", target: nil, action: nil)
     let pauseButton = NSButton(title: "Pause", target: nil, action: nil)
@@ -339,11 +297,11 @@ final class BotApp: NSObject, NSApplicationDelegate {
         let second = Int(ProcessInfo.processInfo.systemUptime - playAnimationStartedAt)
         let text: String
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            text = duelFrames[0]
+            text = dinoFrames[0]
         } else if second < 2 {
             text = second == 0 ? "." : ". . ."
         } else {
-            text = duelFrames[(second - 2) % duelFrames.count]
+            text = dinoFrames[(second - 2) % dinoFrames.count]
         }
         if detail.stringValue != text {
             detail.stringValue = text

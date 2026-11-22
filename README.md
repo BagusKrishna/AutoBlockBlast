@@ -2,11 +2,13 @@
 
 AutoBlockBlast runs on a Mac and plays **Block Blast on an Android phone connected through ADB over USB or Wi-Fi**. Use it to preview the bot's suggested placements or let it play automatically. It reads the board and tray from a scrcpy video stream, searches the legal placements for the visible pieces, and verifies the result after every ADB drag.
 
-## Autoplay preview
+## Preview
 
-A short recording of the bot playing on a Samsung Galaxy A72.
+| Galaxy A72 gameplay | AutoBlockBlast for Mac |
+| --- | --- |
+| <img src="docs/media/autoplay.gif" width="280" alt="Five autoplay moves on a Galaxy A72 with the live score visible"> | <img src="docs/media/desktop-preview.png" width="470" alt="Mac app showing the final score, highest combo, and jumping ASCII dino"> |
 
-![AutoBlockBlast autoplay preview](docs/media/autoplay.gif)
+The recording shows five verified placements and a score increase from **835,965** to **836,142**. The Mac preview shows the final score and the highest combo visible in the same run.
 
 ## Tested setup
 
@@ -62,9 +64,7 @@ See the [Android wireless debugging guide](https://developer.android.com/tools/a
 
 ## Mac desktop app
 
-![AutoBlockBlast desktop app while playing](docs/media/desktop-preview.png)
-
-The screenshot is from an earlier build. While playing, the app shows a looping ASCII duel at one frame per second and aligns the session line, such as `Running for 1m 23s · 99 moves`, with the **Highest combo** column.
+While playing, the app shows a jumping ASCII dino and a session timer next to the move count.
 
 Build the app once from the project folder with `desktop/build-app.sh`. This requires Apple's Swift compiler and the Python environment from setup. Double-click `AutoBlockBlast.app` in the project folder to open it.
 
