@@ -91,6 +91,8 @@ class Controller:
         x2, y2 = self._to_device(dx, dy)
         if not (0 <= x1 < self.screen_w and 0 <= x2 < self.screen_w and 0 <= y1 < self.screen_h and 0 <= y2 < self.screen_h):
             raise RuntimeError("Drag would leave the screen; check the calibration and drop offset.")
+        if duration_ms is None and 3 * abs(x2 - x1) >= self.screen_w:
+            duration_ms = max(config.DRAG_MS, config.LONG_HORIZONTAL_DRAG_MS)
         if duration_ms is None:
             self.swipe(x1, y1, x2, y2)
         else:

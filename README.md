@@ -72,7 +72,7 @@ Connect the phone, open Block Blast and click **Start**. **Pause** finishes the 
 
 ## Run in Terminal
 
-The default swipe duration is 150 ms, verified on the Galaxy A72 over USB. If a swipe leaves the board and tray unchanged, autoplay confirms that state on fresh frames and retries the same placement once at 250 ms. Use `--drag-ms` during a bounded run to test a different duration.
+The default swipe duration is 150 ms. Swipes that travel horizontally across at least a third of the display use 250 ms to give the game more time to track the drag. If a swipe leaves the board and tray unchanged, autoplay confirms that state on fresh frames and retries the same placement once at 250 ms. Use `--drag-ms` during a bounded run to test a different duration.
 
 ```bash
 # Read the board and print a plan without touching the phone

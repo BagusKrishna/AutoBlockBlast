@@ -410,6 +410,19 @@ class VerifiedPlayTests(unittest.TestCase):
             self.assertLess(abs(actual_x - expected_x), 2)
             self.assertLess(abs(actual_y - expected_y), 2)
 
+    def test_long_horizontal_drag_uses_slower_default(self):
+        device = Mock()
+        controller = Controller(device, 1080, 2400)
+        frame_shape = (800, 360, 3)
+        line = np.ones((4, 1), dtype=np.int8)
+        pickup = (78.0, 581.0, 78.0, 608.75)
+        with patch("autoblockblast.controller.require_game"):
+            for column, override, expected_ms in ((6, None, 250), (2, None, 150), (6, 180, 180)):
+                with self.subTest(column=column, override=override):
+                    controller.drag_piece(0, line, Placement(0, 0, column), frame_shape,
+                                          pickup=pickup, duration_ms=override, settle=False)
+                    self.assertEqual(int(device.shell.call_args.args[0].split()[-1]), expected_ms)
+
     def test_two_clears_can_unlock_third_piece(self):
         board = np.array([
             [1, 1, 1, 1, 1, 1, 1, 0],
