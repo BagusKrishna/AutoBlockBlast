@@ -343,6 +343,30 @@ class VerifiedPlayTests(unittest.TestCase):
         self.assertIs(result, settled)
         self.assertEqual(read.call_count, 2)
 
+    def test_dimmed_all_clear_extends_verification_without_accepting_a_mismatch(self):
+        board = self.board.copy()
+        board[0, 1:] = 1
+        before = SimpleNamespace(board=board, pieces=self.before.pieces)
+        dimmed = SimpleNamespace(board=self.expected, pieces=[self.empty, self.single, self.empty])
+        settled = SimpleNamespace(board=self.board, pieces=dimmed.pieces)
+        bright_frame = np.full((80, 36, 3), 186, dtype=np.uint8)
+        dim_frame = np.full_like(bright_frame, 60)
+        for outcome in ((bright_frame, settled, 11), StableReadTimeout("timeout")):
+            with self.subTest(settled=not isinstance(outcome, Exception)), patch(
+                "autoblockblast.autoplay.read_stable", side_effect=[(dim_frame, dimmed, 6), outcome]
+            ) as read, patch("autoblockblast.autoplay.time.monotonic", return_value=0), patch(
+                "autoblockblast.autoplay.save_failure"
+            ):
+                if isinstance(outcome, Exception):
+                    with self.assertRaisesRegex(RuntimeError, "game screen stayed dim after an all-clear"):
+                        wait_verified(Mock(), Mock(), before, self.placement, after=0, before_frame=bright_frame)
+                else:
+                    _, result, _ = wait_verified(
+                        Mock(), Mock(), before, self.placement, after=0, before_frame=bright_frame
+                    )
+                    self.assertIs(result, settled)
+                self.assertEqual([call.kwargs["timeout"] for call in read.call_args_list], [6, 12])
+
     def test_verification_keeps_last_disagreement_when_next_read_times_out(self):
         frame = np.zeros((64, 32, 3), dtype=np.uint8)
         with TemporaryDirectory() as root:

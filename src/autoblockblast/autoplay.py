@@ -230,18 +230,23 @@ def save_failure(device, before, placement, failure, *, before_frame, before_at,
 
 def wait_verified(device, stream, before, placement, *, after, before_frame=None, before_at=None,
                   debug=False, early_clear=False):
+    board, cleared = apply_move(
+        before.board, before.pieces[placement.piece_index], placement.row, placement.col
+    )
+    all_clear = bool(cleared and not board.any())
     read_options = {}
-    if early_clear and sum(bool(piece.size) for piece in before.pieces) > 1:
-        board, cleared = apply_move(
-            before.board, before.pieces[placement.piece_index], placement.row, placement.col
+    if early_clear and cleared and sum(bool(piece.size) for piece in before.pieces) > 1:
+        tray = list(before.pieces)
+        tray[placement.piece_index] = np.empty((0, 0), dtype=np.int8)
+        read_options["expected_key"] = (
+            board.tobytes(), tuple((piece.shape, piece.tobytes()) for piece in tray)
         )
-        if cleared:
-            tray = list(before.pieces)
-            tray[placement.piece_index] = np.empty((0, 0), dtype=np.int8)
-            read_options["expected_key"] = (
-                board.tobytes(), tuple((piece.shape, piece.tobytes()) for piece in tray)
-            )
-    deadline = time.monotonic() + 6.0
+    started = time.monotonic()
+    deadline = started + 6.0
+    dim_threshold = None
+    if all_clear and before_frame is not None:
+        brightness = np.median(before_frame[::8, ::8].max(axis=2))
+        dim_threshold = min(brightness * 0.5, brightness - 45)
     cursor = after
     failure = None
     observed = None
@@ -257,7 +262,14 @@ def wait_verified(device, stream, before, placement, *, after, before_frame=None
         try:
             verify_transition(before, state, placement)
         except RuntimeError as exc:
-            failure = exc
+            if dim_threshold is not None and np.median(frame[::8, ::8].max(axis=2)) <= dim_threshold:
+                deadline = started + 12.0
+                failure = RuntimeError(
+                    "Stopped: the game screen stayed dim after an all-clear. "
+                    "Check Block Blast before restarting. See captures/last-failure/."
+                )
+            else:
+                failure = exc
             continue
         if debug:
             save_debug(device, frame, state, "after.png")
