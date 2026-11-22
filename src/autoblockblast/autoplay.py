@@ -75,6 +75,7 @@ def read_stable(device, stream, *, after=0.0, timeout=8.0, need_pieces=True, exp
     previous = None
     previous_at = 0.0
     seen_at = after
+    saw_valid_state = False
     while time.monotonic() < deadline:
         check_stop()
         require_game(device)
@@ -93,6 +94,7 @@ def read_stable(device, stream, *, after=0.0, timeout=8.0, need_pieces=True, exp
             previous = None
             time.sleep(0.04)
             continue
+        saw_valid_state = True
         key = state_key(state)
         # An exact post-clear prediction needs a second fresh match, with no fixed gap.
         stable_interval = 0.0 if expected_key is not None and key == expected_key else 0.1
@@ -102,7 +104,13 @@ def read_stable(device, stream, *, after=0.0, timeout=8.0, need_pieces=True, exp
         if key != previous:
             previous, previous_at = key, received_at
         time.sleep(0.04)
-    raise StableReadTimeout("No fresh, stable game state. Check that the game is visible and animations have finished.")
+    if seen_at == after:
+        reason = "No new video frames arrived from the phone."
+    elif not saw_valid_state:
+        reason = "Video arrived, but the tray could not be read reliably."
+    else:
+        reason = "Video arrived, but the board and tray did not stay consistent."
+    raise StableReadTimeout(f"No fresh, stable game state. {reason}")
 
 
 def recheck_latest(device, stream, state, state_at):
@@ -125,8 +133,8 @@ def recheck_latest(device, stream, state, state_at):
     return read_stable(device, stream, after=state_at), False
 
 
-def wait_for_planned_state(device, stream, state, *, after):
-    """Give animation a short chance to clear before abandoning the plan."""
+def wait_for_planned_state(device, stream, state, *, after, changed_key=None):
+    """Wait for the planned state or corroborate a changed pre-drag reading."""
     deadline = time.monotonic() + 2.0
     expected = state_key(state)
     while time.monotonic() < deadline:
@@ -135,8 +143,11 @@ def wait_for_planned_state(device, stream, state, *, after):
                                    timeout=max(0.0, deadline - time.monotonic()))
         except StableReadTimeout:
             break
-        if state_key(observed[1]) == expected:
+        key = state_key(observed[1])
+        if key == expected or key == changed_key:
             return observed
+        if changed_key is not None:
+            changed_key = key
         after = observed[2]
     raise RuntimeError(
         "Game state changed during planning. The board or tray still differs after waiting. "
@@ -288,6 +299,7 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
     initial_boards = []
     initial_step = 0
     tray_index = -1
+    replanned = False
     print("Ctrl+C to stop. Keep Block Blast open, phone unlocked and ADB connected.", flush=True)
     try:
         stage("Connecting phone video…")
@@ -341,6 +353,15 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
                 print("Preview only. No touch input sent.", flush=True)
                 return
             if plan is None or not plan.placements or not plan.complete:
+                if not replanned:
+                    stage("Checking the board and tray again…")
+                    latest = read_stable(device, stream, after=state_at, timeout=2.0)
+                    if state_key(latest[1]) != state_key(state):
+                        verified = latest
+                        remaining_plan = initial_plan = None
+                        all_clear_earned = False
+                        replanned = True
+                        continue
                 print("No complete plan for the available pieces. Stopped.", flush=True)
                 return
             quick_trial = fast_recheck or (compare_recheck and tray_index % 2 == 1)
@@ -353,11 +374,21 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
                 (frame, current, current_at), used_quick_frame = recheck_latest(device, stream, state, state_at)
             else:
                 frame, current, current_at = read_stable(device, stream, after=state_at)
-            if state_key(current) != state_key(state):
+            planned_key = state_key(state)
+            current_key = state_key(current)
+            if current_key != planned_key:
                 stage("Waiting for the board to settle…")
                 frame, current, current_at = wait_for_planned_state(
-                    device, stream, state, after=current_at
+                    device, stream, state, after=current_at,
+                    changed_key=None if replanned else current_key,
                 )
+                if state_key(current) != planned_key:
+                    stage("Board or tray changed. Recalculating the move…")
+                    verified = (frame, current, current_at)
+                    remaining_plan = initial_plan = None
+                    all_clear_earned = False
+                    replanned = True
+                    continue
             rechecked = time.monotonic()
             placement = plan.placements[0]
             pickup = None
@@ -444,6 +475,7 @@ def run(*, execute=False, moves=3, drag_ms=None, debug=False, timing=False, solv
                 if not board_matches or initial_step == len(initial_plan):
                     initial_plan = None
             played += 1
+            replanned = False
             _metrics_ready = True
             print(f"Verified move {played}: piece {placement.piece_index + 1} -> row {placement.row + 1}, column {placement.col + 1}", flush=True)
             if timing:

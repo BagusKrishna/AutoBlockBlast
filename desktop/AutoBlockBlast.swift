@@ -363,8 +363,17 @@ final class BotApp: NSObject, NSApplicationDelegate {
         if lower.contains("not in front") {
             return "Unlock your phone and open Block Blast."
         }
-        if lower.contains("no fresh") || lower.contains("stream stopped") || lower.contains("video") {
-            return "The game image is interrupted or unstable. Check the connection, game screen, and animations."
+        if lower.contains("stream stopped") || lower.contains("scrcpy socket") || lower.contains("video header missing") {
+            return "The phone video stream disconnected. Check USB or wireless ADB, then restart."
+        }
+        if lower.contains("no new video frames") {
+            return "No new video frames arrived. Keep Block Blast open and check USB or wireless ADB."
+        }
+        if lower.contains("tray could not be read") {
+            return "The tray could not be read. Wait for the pieces to appear and dismiss any overlays."
+        }
+        if lower.contains("did not stay consistent") {
+            return "The board and tray kept changing. Wait for animations to finish, then restart."
         }
         if message.hasPrefix("Stopped: ") {
             return String(message.dropFirst("Stopped: ".count))
@@ -526,6 +535,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
                       line.contains("unauthorized") || line.contains("already running") ||
                       line.contains("No adb exe") || line.contains("No Android device found") ||
                       line.contains("Unrecognized") || line.contains("stream stopped") ||
+                      line.contains("scrcpy socket") || line.contains("video header missing") ||
                       line.contains("Game state changed") || line.contains("Timed out") ||
                       line.contains("More than one ADB") || line.contains("Waiting for a complete tray") {
                 lastMessage = line

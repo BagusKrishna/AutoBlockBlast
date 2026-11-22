@@ -225,6 +225,29 @@ def _shape_from_centroids(pts: list[tuple[float, float]]) -> np.ndarray:
     return _trim_piece(grid)
 
 
+def _board_background(crop_hsv: np.ndarray, samples: np.ndarray) -> tuple[float, float, float]:
+    gh, gw = crop_hsv.shape[:2]
+    band = max(2, min(gh, gw) // 64)
+    strips = [
+        crop_hsv[:band, :].reshape(-1, 3),
+        crop_hsv[-band:, :].reshape(-1, 3),
+        crop_hsv[:, :band].reshape(-1, 3),
+        crop_hsv[:, -band:].reshape(-1, 3),
+    ]
+    edge = np.vstack(strips)
+    edge_bg = np.median(edge, axis=0)
+
+    dh = np.abs(samples[:, 0] - edge_bg[0])
+    circ_dh = np.minimum(dh, 180 - dh)
+    ds = np.abs(samples[:, 1] - edge_bg[1])
+    dv = np.abs(samples[:, 2] - edge_bg[2])
+    candidates = (circ_dh <= 12) & (ds <= 35) & (dv <= 40)
+    if candidates.any():
+        bg = np.median(samples[candidates], axis=0)
+        return float(bg[0]), float(bg[1]), float(bg[2])
+    return float(edge_bg[0]), float(edge_bg[1]), float(edge_bg[2])
+
+
 def parse_board(frame: np.ndarray, board_rect: config.Rect | None = None) -> tuple[np.ndarray, np.ndarray]:
     rect = board_rect or config.BOARD_RECT
     crop = _crop_rel(frame, rect)
@@ -237,17 +260,12 @@ def parse_board(frame: np.ndarray, board_rect: config.Rect | None = None) -> tup
     ys = points[:, 0, None, None] + offsets[None, :, None]
     xs = points[:, 1, None, None] + offsets[None, None, :]
     samples = np.median(hsv[ys, xs], axis=(1, 2))
-    hue, saturation, value = samples.T
-    # Pink empty cells can be brighter than the normal occupancy threshold.
-    pink = (hue >= 160) & (hue <= 178) & (value >= 120) & (value <= 175)
-    if pink.sum() >= 4:
-        bg_h, bg_s, bg_v = np.median(samples[pink], axis=0)
-        delta_h = np.abs(hue - bg_h)
-        occupied = (np.minimum(delta_h, 180 - delta_h) > 8) | (np.abs(saturation - bg_s) > 25) | (np.abs(value - bg_v) > 25)
-    else:
-        occupied = (value >= config.CELL_V_MIN) | (
-            (value >= config.CELL_V_MIN - 25) & (saturation >= config.CELL_S_MIN)
-        )
+    bg_h, bg_s, bg_v = _board_background(hsv, samples)
+    delta_h = np.abs(samples[:, 0] - bg_h)
+    circ_dh = np.minimum(delta_h, 180 - delta_h)
+    delta_s = np.abs(samples[:, 1] - bg_s)
+    delta_v = np.abs(samples[:, 2] - bg_v)
+    occupied = (circ_dh > 8) | (delta_s > 25) | (delta_v > 25)
     board = occupied.reshape(n, n).astype(np.int8)
     return board, crop
 

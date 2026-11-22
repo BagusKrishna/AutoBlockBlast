@@ -130,6 +130,36 @@ class VerifiedPlayTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "board or tray still differs"):
                 autoplay.wait_for_planned_state(Mock(), Mock(), self.before, after=10.0)
 
+    def test_replans_from_fresh_state_before_any_swipe(self):
+        from autoblockblast import autoplay
+        frame = np.zeros((80, 36, 3), dtype=np.uint8)
+        changed = SimpleNamespace(board=self.expected, pieces=self.before.pieces)
+        old_plan = solve_exact(self.board, self.before.pieces)
+        new_plan = solve_exact(changed.board, changed.pieces)
+        new_move = new_plan.placements[0]
+        placed, _ = apply_move(changed.board, changed.pieces[new_move.piece_index], new_move.row, new_move.col)
+        after = SimpleNamespace(board=placed)
+
+        for initial_plan in (old_plan, None):
+            with self.subTest(has_initial_plan=initial_plan is not None):
+                observations = [(frame, self.before, 1), (frame, changed, 2), (frame, changed, 3)]
+                if initial_plan is not None:
+                    observations.append((frame, changed, 4))
+                with patch.multiple(
+                    "autoblockblast.autoplay", get_device=Mock(), require_game=Mock(),
+                    physical_size=Mock(return_value=(1080, 2400)), Controller=Mock(),
+                    ScrcpyStream=Mock(), check_stop=Mock(), wait_if_paused=Mock(return_value=False),
+                    solve_exact=Mock(side_effect=[initial_plan, new_plan]),
+                    read_stable=Mock(side_effect=observations),
+                    wait_verified=Mock(return_value=(frame, after, 5)),
+                ):
+                    run(execute=True, moves=1)
+                    self.assertIs(autoplay.solve_exact.call_args.args[0], changed.board)
+                    drag = autoplay.Controller.return_value.drag_piece
+                    drag.assert_called_once()
+                    self.assertEqual(drag.call_args.args[2], new_move)
+                    autoplay.wait_verified.assert_called_once()
+
     def test_chain_uses_verified_frame_while_fresh_and_rejects_changed_board(self):
         from autoblockblast import autoplay
         frame = np.zeros((800, 360, 3), dtype=np.uint8)
