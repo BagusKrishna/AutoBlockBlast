@@ -108,12 +108,39 @@ final class BotApp: NSObject, NSApplicationDelegate {
     private var playAnimationTimer: Timer?
     private var playAnimationStartedAt: TimeInterval = 0
     private let detailFont = NSFont.systemFont(ofSize: 14)
-    private let stickmanFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
-    private let walkingFrames = [
-        " o\n/|\\\n/ \\",
-        "  o\n /|>\n /|",
-        "   o\n  \\|/\n  / \\",
-        "    o\n   <|\\\n    |\\",
+    private let storyFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+    private let storyScenes = [
+        // The walker spots something ahead.
+        [
+            " o             .\n/|\\\n/ \\",
+            "   o           .\n  /|>\n  /|",
+            "     o         .\n    \\|/\n    / \\",
+            "       o       .\n      /|>\n      /|",
+        ],
+        // Up close, it's a donut.
+        [
+            "         o       .---.\n        /|>     ( ( ) )\n        / \\      '---'",
+            "         o     * .---.\n        /|>     ( ( ) )\n        / \\      '---'",
+            "         o       .---. *\n        /|>     ( ( ) )\n        / \\      '---'",
+        ],
+        // The donut flashes and becomes an orb.
+        [
+            "           *     .---.\n      o         ( ( ) ) *\n     /|>         '---'",
+            "            \\    |    /\n      o       -- O --\n     / \\    /    |    \\",
+            "                 .-.\n      o        *( + )*\n     /|\\         '-'",
+        ],
+        // The orb lights up a tiny rocket.
+        [
+            "                  /\\\n       .-.       /  \\\n      ( + )     | [] |",
+            "                  /\\\n           .-.   /  \\\n          ( + )>| [] |",
+            "                  /\\\n                 /  \\\n                | +  |",
+        ],
+        // Liftoff.
+        [
+            "                  /\\\n                 |+ |\n                /_vv_\\",
+            "                  /\\\n                /_vv_\\\n                 '  '",
+            "            *     ^     *\n                '   '\n           .               .",
+        ],
     ]
     let startButton = NSButton(title: "Start", target: nil, action: nil)
     let pauseButton = NSButton(title: "Pause", target: nil, action: nil)
@@ -274,7 +301,7 @@ final class BotApp: NSObject, NSApplicationDelegate {
 
     private func showPlayingAnimation() {
         if playAnimationTimer == nil {
-            detail.font = stickmanFont
+            detail.font = storyFont
             detail.setAccessibilityLabel("Autoplay in progress")
             playAnimationStartedAt = ProcessInfo.processInfo.systemUptime
             playAnimationTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
@@ -288,12 +315,17 @@ final class BotApp: NSObject, NSApplicationDelegate {
         let elapsed = ProcessInfo.processInfo.systemUptime - playAnimationStartedAt
         let text: String
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            text = walkingFrames[0]
+            text = storyScenes[1][0]
         } else if elapsed < 2 {
             let dots = min(3, Int(elapsed / 0.5) + 1)
             text = String(repeating: ". ", count: dots - 1) + "."
         } else {
-            text = walkingFrames[Int((elapsed - 2) / 0.5) % walkingFrames.count]
+            let sceneDuration = 6.0
+            let storyTime = elapsed - 2
+            let scene = storyScenes[Int(storyTime / sceneDuration) % storyScenes.count]
+            let sceneTime = storyTime.truncatingRemainder(dividingBy: sceneDuration)
+            let frame = Int(sceneTime / sceneDuration * Double(scene.count))
+            text = scene[frame]
         }
         if detail.stringValue != text {
             detail.stringValue = text
