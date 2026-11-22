@@ -5,7 +5,7 @@ import unittest
 import cv2 as cv
 import numpy as np
 
-from autoblockblast.vision import analyze, parse_board, parse_pieces, pickup_geometry
+from autoblockblast.vision import analyze, parse_board, parse_piece_slot, parse_pieces, pickup_geometry
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -23,6 +23,17 @@ class ScreenFixtures(unittest.TestCase):
         board, _ = parse_board(frame, board_rect=(0, 0, 1, 1))
 
         np.testing.assert_array_equal(board, expected)
+
+    def test_gray_tray_preserves_shape_and_rejects_near_black_frames(self):
+        hsv = np.full((120, 130, 3), (0, 0, 62), dtype=np.uint8)
+        hsv[25:97, 49:89] = (100, 20, 66)
+        hsv[34:52, 51:87] = (80, 180, 232)
+        hsv[52:88, 69:87] = (80, 180, 232)
+        slot = cv.cvtColor(hsv, cv.COLOR_HSV2BGR)
+        self.assertEqual(parse_piece_slot(slot).tolist(), [[1, 1], [0, 1], [0, 1]])
+
+        dim_slot = np.round(slot * 0.1).astype(np.uint8)
+        self.assertFalse(parse_piece_slot(dim_slot).size)
 
     def test_orange_board_with_colored_edges_keeps_empty_cells(self):
         rows = [

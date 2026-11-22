@@ -5,6 +5,8 @@ import numpy as np
 
 from autoblockblast import config
 
+_MIN_HSV_CHROMA = 8 * 255
+
 
 @dataclass
 class VisionResult:
@@ -45,7 +47,15 @@ def piece_mask(hsv: np.ndarray) -> np.ndarray:
     dh = _hue_dist(H, bg_h)
     ds = np.abs(S.astype(np.int16) - int(bg_s))
     dv = np.abs(V.astype(np.int16) - int(bg_v))
-    block = (dv >= config.PIECE_V_DELTA) | (ds >= config.PIECE_S_DELTA) | ((dh >= config.PIECE_H_DELTA) & (S >= 15))
+    block = dv >= config.PIECE_V_DELTA
+    if bg_s * bg_v < _MIN_HSV_CHROMA:
+        # Gray backgrounds can have saturated-looking noise in dark pixels.
+        if bg_v <= 12 and V.max() < config.PIECE_V_DELTA:
+            return np.zeros_like(V)
+        chroma = np.multiply(S, V, dtype=np.int32)
+        block |= (ds >= config.PIECE_S_DELTA) & (V >= bg_v) & (chroma >= _MIN_HSV_CHROMA)
+    else:
+        block |= (ds >= config.PIECE_S_DELTA) | ((dh >= config.PIECE_H_DELTA) & (S >= 15))
     mask = block.astype(np.uint8)
     k = config.PIECE_OPEN
     if k > 1:
@@ -229,12 +239,11 @@ def _board_color_distance(pixels: np.ndarray, background: np.ndarray) -> tuple[n
     hue, saturation, value = np.abs(pixels - background).T
     hue = np.minimum(hue, 180 - hue)
     # HSV hue can swing sharply when RGB channels differ by only a few levels.
-    min_chroma = 8 * 255
-    if background[1] * background[2] < min_chroma:
+    if background[1] * background[2] < _MIN_HSV_CHROMA:
         hue.fill(0)
     else:
         chroma = np.multiply(pixels[:, 1], pixels[:, 2], dtype=np.float32)
-        hue[chroma < min_chroma] = 0
+        hue[chroma < _MIN_HSV_CHROMA] = 0
     return hue, saturation, value
 
 
